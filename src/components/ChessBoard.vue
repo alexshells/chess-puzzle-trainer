@@ -1,0 +1,243 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import {
+  TheChessboard,
+  type BoardConfig,
+  type BoardApi,
+  type PieceColor,
+  type Move,
+} from 'vue3-chessboard'
+import 'vue3-chessboard/style.css'
+
+export interface Puzzle {
+  fen: string
+  solution: string[] // UCI moves, e.g. 'e7e5' or 'e7e8q'; index 0 is the opponent's auto-played setup move
+}
+
+type Mode = 'setup' | 'solving' | 'mistake' | 'solved'
+
+const props = withDefaults(
+  defineProps<{
+    puzzle?: Puzzle | null
+  }>(),
+  { puzzle: null },
+)
+
+const emit = defineEmits<{
+  solved: []
+  mistake: [attempted: string, expected: string]
+  'position-changed': [fen: string, ply: number]
+}>()
+
+const boardConfig: BoardConfig = {
+  coordinates: true,
+}
+
+let boardApi: BoardApi | undefined
+let autoPlaying = false // true while we're programmatically playing a move, so handleMove skips solution-checking
+const mode = ref<Mode>('setup')
+const solutionIndex = ref(0)
+const turnColor = ref<PieceColor>('white')
+const statusText = ref('White to move')
+
+function label(color: PieceColor): string {
+  return color === 'white' ? 'White' : 'Black'
+}
+
+/** Splits a UCI move ("e7e8q") into the { from, to, promotion } shape boardApi.move() expects. */
+function uciToMove(uci: string): Move {
+  return {
+    from: uci.slice(0, 2),
+    to: uci.slice(2, 4),
+    promotion: uci.slice(4) || undefined,
+  } as Move
+}
+
+/** Plays a move programmatically (auto-play of setup/reply moves) without triggering solution-checking. */
+function playMove(uci: string) {
+  autoPlaying = true
+  boardApi?.move(uciToMove(uci))
+  autoPlaying = false
+}
+
+/** Syncs turnColor/statusText from the board's actual state, rather than assuming who moves next. */
+function syncStatus() {
+  if (!boardApi) return
+  turnColor.value = boardApi.getTurnColor()
+  statusText.value = `${label(turnColor.value)} to move`
+}
+
+function handleBoardCreated(api: BoardApi) {
+  boardApi = api
+  if (props.puzzle) {
+    loadPuzzle(props.puzzle)
+  }
+}
+
+// Reload whenever the parent hands us a new puzzle (e.g. "next puzzle" clicked).
+watch(
+  () => props.puzzle,
+  (puzzle) => {
+    if (puzzle) loadPuzzle(puzzle)
+  },
+)
+
+/**
+ * Loads a puzzle onto the board and auto-plays the opponent's setup move
+ * (solution[0]), leaving the user to find solution[1].
+ */
+function loadPuzzle(puzzle: Puzzle) {
+  mode.value = 'setup'
+  solutionIndex.value = 0
+  boardApi?.setConfig({ viewOnly: false }) // in case the previous puzzle was left frozen mid-mistake
+
+  boardApi?.setPosition(puzzle.fen)
+
+  const setupMove = puzzle.solution[0]
+  if (setupMove) {
+    playMove(setupMove)
+  }
+
+  syncStatus()
+  solutionIndex.value = 1
+  mode.value = 'solving'
+}
+
+/**
+ * Fires on every move made on the board (user drag or programmatic auto-play).
+ * Puzzle-correctness checking only applies while mode === 'solving'.
+ */
+function handleMove() {
+  syncStatus()
+  emitPositionChanged()
+
+  if (autoPlaying || mode.value !== 'solving' || !props.puzzle) return
+
+  const last = boardApi?.getLastMove()
+  if (!last) return
+
+  const attempted = last.lan // chess.js's long-algebraic form, same shape as our UCI solution strings
+  const expected = props.puzzle.solution[solutionIndex.value]
+
+  if (attempted !== expected) {
+    mode.value = 'mistake'
+    boardApi?.setConfig({ viewOnly: true }) // freeze the board so the wrong move stays visible
+    emit('mistake', attempted, expected)
+    return
+  }
+
+  const replyIndex = solutionIndex.value + 1
+  const reply = props.puzzle.solution[replyIndex]
+
+  if (reply === undefined) {
+    solutionIndex.value = replyIndex
+    mode.value = 'solved'
+    emit('solved')
+    return
+  }
+
+  solutionIndex.value = replyIndex + 1
+  playMove(reply)
+}
+
+/** Undoes the mistaken move and lets the user try again from the same spot. */
+function retry() {
+  boardApi?.undoLastMove()
+  boardApi?.setConfig({ viewOnly: false })
+  mode.value = 'solving'
+  syncStatus()
+}
+
+function emitPositionChanged() {
+  if (!boardApi) return
+  emit('position-changed', boardApi.getFen(), boardApi.getCurrentPlyNumber())
+}
+
+function handleCheck(color: PieceColor) {
+  statusText.value = `${label(color)} to move — check`
+}
+
+function handleCheckmate(color: PieceColor) {
+  statusText.value = `Checkmate — ${label(color === 'white' ? 'black' : 'white')} wins`
+}
+
+function handleStalemate() {
+  statusText.value = 'Draw — stalemate'
+}
+
+function handleDraw() {
+  statusText.value = 'Draw'
+}
+
+function reset() {
+  if (props.puzzle) {
+    loadPuzzle(props.puzzle)
+    return
+  }
+  boardApi?.resetBoard()
+  turnColor.value = 'white'
+  statusText.value = 'White to move'
+  mode.value = 'setup'
+}
+
+// --- post-solve review navigation (mode === 'solved') ---
+function viewStart() {
+  boardApi?.viewStart()
+}
+function viewPrevious() {
+  boardApi?.viewPrevious()
+}
+function viewNext() {
+  boardApi?.viewNext()
+}
+function viewLive() {
+  boardApi?.stopViewingHistory()
+}
+</script>
+
+<template>
+  <div class="board-wrap">
+    <p class="status">{{ statusText }}</p>
+    <TheChessboard
+      :board-config="boardConfig"
+      @board-created="handleBoardCreated"
+      @move="handleMove"
+      @check="handleCheck"
+      @checkmate="handleCheckmate"
+      @stalemate="handleStalemate"
+      @draw="handleDraw"
+    />
+
+    <div v-if="mode === 'mistake'" class="mistake-controls">
+      <p class="mistake-text">Not quite — that's not the puzzle move.</p>
+      <button class="retry" @click="retry">Retry</button>
+    </div>
+
+    <div v-if="mode === 'solved'" class="review-controls">
+      <button @click="viewStart">|&lt;</button>
+      <button @click="viewPrevious">&lt;</button>
+      <button @click="viewNext">&gt;</button>
+      <button @click="viewLive">&gt;|</button>
+    </div>
+
+    <button class="reset" @click="reset">Reset board</button>
+  </div>
+</template>
+
+<style scoped>
+.board-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+.status { font-size: 0.95rem; color: #cfc6b3; min-height: 1.2em; }
+.mistake-controls { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+.mistake-text { color: #cfc6b3; font-size: 0.9rem; margin: 0; }
+.review-controls { display: flex; gap: 0.4rem; }
+.reset,
+.retry,
+.review-controls button {
+  background: transparent;
+  color: #ede6d6;
+  border: 1px solid #b8985a;
+  border-radius: 4px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+</style>
