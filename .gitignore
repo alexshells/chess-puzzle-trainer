@@ -23,5 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Claude Code local settings (personal permissions, machine-specific)
+# Claude Code local settings and runtime state (personal, machine-specific)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock

@@ -1,9 +1,9 @@
 import type { Puzzle } from './components/ChessBoard.vue'
 
-// Hand-built placeholder seed data (see CLAUDE.md) — each solution line was
-// verified legal (and mate/check where claimed) with chess.js before being
-// added here. Real puzzle delivery will come from the Lichess CC0 database
-// once the backend exists.
+// Offline fallback puzzles, used only when the backend (see backend/) is
+// unreachable — App.vue fetches real puzzles from the Lichess-backed API by
+// default. Each solution line here was verified legal (and mate/check where
+// claimed) with chess.js before being added.
 export const puzzles: Puzzle[] = [
   {
     // Black plays a harmless waiting move, then white finds the back-rank mate.

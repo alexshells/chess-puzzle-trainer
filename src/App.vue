@@ -1,23 +1,42 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import ChessBoard from './components/ChessBoard.vue'
-import { puzzles } from './puzzles'
+import { onMounted, ref } from 'vue'
+import ChessBoard, { type Puzzle } from './components/ChessBoard.vue'
+import { fetchRandomPuzzle } from './api'
+import { puzzles as fallbackPuzzles } from './puzzles'
 
-const index = ref(0)
-const currentPuzzle = computed(() => puzzles[index.value])
+const currentPuzzle = ref<Puzzle | null>(null)
 const solved = ref(false)
+const solvedCount = ref(0)
+const usingFallback = ref(false)
+let fallbackIndex = 0
 
-function nextPuzzle() {
-  index.value = (index.value + 1) % puzzles.length
+async function nextPuzzle() {
   solved.value = false
+  try {
+    currentPuzzle.value = await fetchRandomPuzzle()
+    usingFallback.value = false
+  } catch {
+    // Backend not running/unreachable — fall back to the hand-verified seed puzzles.
+    usingFallback.value = true
+    currentPuzzle.value = fallbackPuzzles[fallbackIndex]
+    fallbackIndex = (fallbackIndex + 1) % fallbackPuzzles.length
+  }
 }
+
+function handleSolved() {
+  solved.value = true
+  solvedCount.value++
+}
+
+onMounted(nextPuzzle)
 </script>
 
 <template>
   <main>
     <h1>Chess Puzzle Trainer</h1>
-    <p class="counter">Puzzle {{ index + 1 }} of {{ puzzles.length }}</p>
-    <ChessBoard :puzzle="currentPuzzle" @solved="solved = true" />
+    <p class="counter">{{ solvedCount }} puzzles solved this session</p>
+    <p v-if="usingFallback" class="counter">Backend unreachable — showing an offline seed puzzle</p>
+    <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" />
     <button v-if="solved" class="next" @click="nextPuzzle">Next puzzle →</button>
   </main>
 </template>
