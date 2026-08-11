@@ -12,6 +12,7 @@ import 'vue3-chessboard/style.css'
 export interface Puzzle {
   fen: string
   solution: string[] // UCI moves, e.g. 'e7e5' or 'e7e8q'; index 0 is the opponent's auto-played setup move
+  rating?: number // absent for the hand-built offline fallback puzzles, which aren't Lichess-rated
 }
 
 type Mode = 'setup' | 'solving' | 'mistake' | 'solved'
@@ -89,7 +90,13 @@ watch(
 function loadPuzzle(puzzle: Puzzle) {
   mode.value = 'setup'
   solutionIndex.value = 0
-  boardApi?.setConfig({ viewOnly: false }) // in case the previous puzzle was left frozen mid-mistake
+
+  // puzzle.fen's active-color field tells us who plays the auto-played setup
+  // move (solution[0]) — the user solves as the other color, so the board
+  // should show that side at the bottom.
+  const opponentColor = puzzle.fen.split(' ')[1] === 'w' ? 'white' : 'black'
+  const userColor: PieceColor = opponentColor === 'white' ? 'black' : 'white'
+  boardApi?.setConfig({ viewOnly: false, orientation: userColor }) // viewOnly: false in case the previous puzzle was left frozen mid-mistake
 
   boardApi?.setPosition(puzzle.fen)
 
@@ -169,7 +176,7 @@ function handleDraw() {
   statusText.value = 'Draw'
 }
 
-function reset() {
+function restartPuzzle() {
   if (props.puzzle) {
     loadPuzzle(props.puzzle)
     return
@@ -198,6 +205,7 @@ function viewLive() {
 <template>
   <div class="board-wrap">
     <p class="status">{{ statusText }}</p>
+    <p v-if="puzzle?.rating" class="rating">Puzzle rating: {{ puzzle.rating }}</p>
     <TheChessboard
       :board-config="boardConfig"
       @board-created="handleBoardCreated"
@@ -220,17 +228,18 @@ function viewLive() {
       <button @click="viewLive">&gt;|</button>
     </div>
 
-    <button class="reset" @click="reset">Reset board</button>
+    <button class="restart" @click="restartPuzzle">Restart puzzle</button>
   </div>
 </template>
 
 <style scoped>
 .board-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 0.75rem; }
 .status { font-size: 0.95rem; color: #cfc6b3; min-height: 1.2em; }
+.rating { font-size: 0.85rem; color: #b8985a; margin: -0.4rem 0 0; }
 .mistake-controls { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
 .mistake-text { color: #cfc6b3; font-size: 0.9rem; margin: 0; }
 .review-controls { display: flex; gap: 0.4rem; }
-.reset,
+.restart,
 .retry,
 .review-controls button {
   background: transparent;
