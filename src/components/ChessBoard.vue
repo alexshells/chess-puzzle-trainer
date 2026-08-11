@@ -234,6 +234,28 @@ function viewLive() {
 
 <style scoped>
 .board-wrap { display: inline-flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+
+/*
+ * :deep() is needed here because chessground renders the <coords> elements
+ * itself (outside Vue's template), so they never get this component's
+ * scoped data-v-* attribute — a plain `coords { ... }` rule wouldn't match.
+ * Default styling (12px, plain white) is nearly invisible against the
+ * board's light squares; the text-shadow gives a dark outline so labels
+ * stay legible against light and dark squares alike.
+ */
+:deep(coords) {
+  font-size: 17px;
+  text-shadow:
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000,
+    1px 1px 0 #000;
+}
+/* Nudged up so the file letters sit fully inside the board's bottom edge
+   instead of spilling below it. */
+:deep(coords.files) {
+  bottom: 4px;
+}
 .status { font-size: 0.95rem; color: #cfc6b3; min-height: 1.2em; }
 .rating { font-size: 0.85rem; color: #b8985a; margin: -0.4rem 0 0; }
 .mistake-controls { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
