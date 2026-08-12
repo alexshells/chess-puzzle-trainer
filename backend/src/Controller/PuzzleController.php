@@ -23,6 +23,7 @@ class PuzzleController
         }
 
         return new JsonResponse([
+            'id' => $puzzle->getId(),
             'fen' => $puzzle->getFen(),
             'solution' => $puzzle->getSolution(),
             'rating' => $puzzle->getRating(),

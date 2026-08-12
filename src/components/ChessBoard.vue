@@ -10,6 +10,7 @@ import {
 import 'vue3-chessboard/style.css'
 
 export interface Puzzle {
+  id?: number // absent for the hand-built offline fallback puzzles, which aren't backend-tracked
   fen: string
   solution: string[] // UCI moves, e.g. 'e7e5' or 'e7e8q'; index 0 is the opponent's auto-played setup move
   rating?: number // absent for the hand-built offline fallback puzzles, which aren't Lichess-rated
