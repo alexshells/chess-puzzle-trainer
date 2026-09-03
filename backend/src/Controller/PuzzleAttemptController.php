@@ -5,7 +5,9 @@ namespace App\Controller;
 use App\Entity\Puzzle;
 use App\Entity\PuzzleAttempt;
 use App\Entity\User;
+use App\Entity\UserThemeRating;
 use App\Repository\PuzzleAttemptRepository;
+use App\Repository\UserThemeRatingRepository;
 use App\Service\GlickoRatingService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
@@ -19,6 +21,7 @@ class PuzzleAttemptController
         private readonly Security $security,
         private readonly EntityManagerInterface $entityManager,
         private readonly PuzzleAttemptRepository $puzzleAttemptRepository,
+        private readonly UserThemeRatingRepository $userThemeRatingRepository,
         private readonly GlickoRatingService $glickoRatingService,
     ) {
     }
@@ -41,6 +44,17 @@ class PuzzleAttemptController
 
         $attempt = new PuzzleAttempt($user, $puzzle, $data['success'], $data['timeSpentSeconds']);
         $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
+
+        // Same update, once per theme tag on this puzzle — a puzzle tagged
+        // ["fork","endgame"] moves both category ratings independently of each
+        // other and of the overall rating above. This is what the /stats page's
+        // per-category chart reads.
+        foreach ($puzzle->getThemes() ?? [] as $theme) {
+            $themeRating = $this->userThemeRatingRepository->findOneForUserAndTheme($user, $theme)
+                ?? new UserThemeRating($user, $theme);
+            $this->glickoRatingService->recordAttempt($themeRating, $puzzle, $data['success']);
+            $this->entityManager->persist($themeRating);
+        }
 
         $this->entityManager->persist($attempt);
         $this->entityManager->flush();

@@ -89,6 +89,16 @@ export function fetchMyAttempts(token: string): Promise<AttemptRecord[]> {
   return request('/api/me/attempts', token)
 }
 
+export interface ThemeRating {
+  theme: string
+  rating: number
+  ratingDeviation: number
+}
+
+export function fetchThemeRatings(token: string): Promise<ThemeRating[]> {
+  return request('/api/me/theme-ratings', token)
+}
+
 export interface LeaderboardEntry {
   friendshipId: number | null
   userId: number

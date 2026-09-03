@@ -3,14 +3,16 @@
 namespace App\Service;
 
 use App\Entity\Puzzle;
-use App\Entity\User;
+use App\Entity\Rateable;
 
 /**
  * Glicko-2 rating updates, per Mark Glickman's "Example of the Glicko-2 System"
  * (http://www.glicko.net/glicko/glicko2.pdf). applyPeriod() is a direct, pure
  * port of the paper's steps 1-8 and is what the worked-example test validates;
  * recordAttempt() is the app-specific wrapper that treats a single puzzle
- * attempt as a one-game rating period.
+ * attempt as a one-game rating period — reused for both a player's overall
+ * rating (User) and their per-theme ratings (UserThemeRating), since both
+ * implement Rateable identically.
  */
 class GlickoRatingService
 {
@@ -30,16 +32,16 @@ class GlickoRatingService
      */
     private const PUZZLE_RATING_DEVIATION = 50.0;
 
-    public function recordAttempt(User $user, Puzzle $puzzle, bool $success): void
+    public function recordAttempt(Rateable $rateable, Puzzle $puzzle, bool $success): void
     {
         [$rating, $ratingDeviation, $volatility] = $this->applyPeriod(
-            $user->getRating(),
-            $user->getRatingDeviation(),
-            $user->getVolatility(),
+            $rateable->getRating(),
+            $rateable->getRatingDeviation(),
+            $rateable->getVolatility(),
             [[$puzzle->getRating(), self::PUZZLE_RATING_DEVIATION, $success ? 1.0 : 0.0]],
         );
 
-        $user->setRatingState((int) round($rating), $ratingDeviation, $volatility);
+        $rateable->setRatingState((int) round($rating), $ratingDeviation, $volatility);
     }
 
     /**

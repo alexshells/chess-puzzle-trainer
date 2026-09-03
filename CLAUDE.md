@@ -32,10 +32,18 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
 - Board UI: `vue3-chessboard` (wraps Lichess's `chessground` + `chess.js`
   internally — don't add a direct `chess.js` dependency, it's already pulled
   in transitively)
-- `vue-router` for `/` (puzzle solving) and `/history` (attempt history)
+- `vue-router` for `/` (puzzle solving), `/stats` (per-category rating chart
+  + attempt history), and `/friends` (leaderboard)
 - No component library beyond that; styling is hand-written CSS, chess-themed
   palette (walnut/charcoal background `#1c1a17`, parchment text `#ede6d6`,
   brass accent `#b8985a`) — intentionally not generic SaaS-dashboard styling
+- `RadarChart.vue`: hand-rolled SVG (no charting library) — one polygon per
+  gridline ring, one accent-hue fill for the single data series, a hover +
+  focus tooltip per vertex, and a plain-text theme→rating list alongside it
+  as the accessible "table view" twin. Set `overflow: visible` on the `<svg>`
+  — labels at the horizontal extremes get clipped by the viewBox otherwise,
+  since side labels are anchored to grow outward from their point rather
+  than centered
 
 **Backend (`backend/`):**
 - Symfony (PHP), chosen over Spring Boot deliberately — see "Why Symfony"
@@ -56,7 +64,8 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   "friends list" framing rather than a directed follow graph — see
   `FriendshipController` and `Friendship`'s class doc for the invariants
   (no duplicate reverse row; a same-direction re-request flips an existing
-  reverse-pending row to accepted instead of erroring).
+  reverse-pending row to accepted instead of erroring). `UserThemeRating`
+  (see below) is the sixth entity.
 - `GlickoRatingService` and `PuzzleSelectionService`: **built**.
   - `GlickoRatingService`: full Glicko-2 port, validated against Glickman's
     own published worked example (rating 1500/RD 200/vol 0.06 vs three
@@ -101,6 +110,17 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   (200 rows) from the indexed rating-band range and filters for a theme
   match in PHP — fast, and correct as long as the band has reasonable theme
   density, which in practice it does
+- `UserThemeRating`: a real per-category Glicko-2 rating (own `rating`/
+  `ratingDeviation`/`volatility` columns, one row per `(user, theme)` pair),
+  not just a relative miss-rate signal — `User` and `UserThemeRating` both
+  implement a small `Rateable` interface so `GlickoRatingService::recordAttempt()`
+  is one implementation reused for both the overall rating and every theme
+  tag on the attempted puzzle (`PuzzleAttemptController`). This is a
+  different, later decision than `ml/`'s `user_pattern_weakness` (a delta
+  used only to bias puzzle *selection*) — `UserThemeRating` is what
+  `/stats`'s category chart reads, is the system of record for "how good are
+  you at forks," and lives in `backend/` since Glicko computation is
+  `backend/`'s home turf, not `ml/`'s
 
 **ML/personalization (`ml/`):**
 - Python (FastAPI + SQLAlchemy + Alembic, `uv`-managed). Deliberately a

@@ -10,7 +10,7 @@ import { session, setSession, logout } from './session'
 
     <nav v-if="session" class="nav">
       <RouterLink to="/">Puzzles</RouterLink>
-      <RouterLink to="/history">History</RouterLink>
+      <RouterLink to="/stats">Stats</RouterLink>
       <RouterLink to="/friends">Friends</RouterLink>
     </nav>
 
