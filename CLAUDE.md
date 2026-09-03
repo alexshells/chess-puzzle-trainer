@@ -112,14 +112,26 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   (200 rows) from the indexed rating-band range and filters for a theme
   match in PHP — fast, and correct as long as the band has reasonable theme
   density, which in practice it does
-- `PuzzleCategory`: a **fixed, small enum** (Checkmate, Fork, Pin, Skewer,
-  Discovered Attack, Sacrifice, Hanging Piece, Endgame) — deliberately not
-  Lichess's ~60 raw theme tags. `PuzzleCategoryMapper` maps raw tags onto it
-  (e.g. `mateIn1`/`mateIn2`/`mateIn3`/`backRankMate`/... all collapse to
-  `Checkmate`); most raw tags (difficulty, length, game phase, opponent
-  strength — "short", "crushing", "master", "middlegame") are deliberately
-  unmapped and contribute to no category. A puzzle can map to more than one
-  category (`["fork","mateIn2"]` → both Fork and Checkmate) or none. Changing
+- `PuzzleCategory`: a **fixed, small enum** — Checkmate, Fork, Pin, Skewer,
+  Discovered Attack, King Attack, Sacrifice, Defensive Move, Loose Piece,
+  Deflection, Endgame (11 cases) — deliberately not Lichess's ~60 raw theme
+  tags. Chosen from actual tag frequency in the imported data, not "which
+  motifs are famous": the first-cut 8 (no King Attack/Defensive Move/
+  Deflection) missed three category-worthy skills each more common than Pin.
+  `PuzzleCategoryMapper` maps raw tags onto it — Checkmate matches by naming
+  convention (`mateIn1..5`, `mate`, anything ending `...Mate`) rather than a
+  hand list, since Lichess has ~20 named mate-pattern tags
+  (`backRankMate`/`smotheredMate`/`pillsburysMate`/...) and a hand list would
+  silently miss new ones. `hangingPiece`/`trappedPiece` are a deliberate
+  merge into `LoosePiece` (distinct skills — undefended vs. cornered — kept
+  together by choice, not by oversight); `deflection`/`attraction`/
+  `clearance`/`interference`/`intermezzo`/`capturingDefender` all merge into
+  `Deflection` (one family, "force a defender away"). Most raw tags
+  (difficulty, length, game phase, opponent strength — "short", "crushing",
+  "master", "middlegame" — plus ambiguous ones like `quietMove`, which reads
+  as both attacking prep and defensive prophylaxis) are deliberately unmapped
+  and contribute to no category. A puzzle can map to more than one category
+  (`["fork","mateIn2"]` → both Fork and Checkmate) or none. Changing
   `PuzzleCategory`'s cases or the mapping is a real product decision (it's
   what every user's `/stats` chart shows) — update both together, and run
   `app:recompute-category-ratings` afterward (see below)

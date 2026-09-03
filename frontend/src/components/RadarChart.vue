@@ -4,9 +4,9 @@ import type { CategoryRating } from '../api'
 
 const props = defineProps<{ ratings: CategoryRating[] }>()
 
-const SIZE = 320
+const SIZE = 420
 const CENTER = SIZE / 2
-const RADIUS = 120
+const RADIUS = 160
 const RING_FRACTIONS = [0.25, 0.5, 0.75, 1]
 
 // A tight domain would exaggerate small differences into a wildly spiky
@@ -151,7 +151,7 @@ const hoveredIndex = ref<number | null>(null)
   align-items: center;
   justify-content: center;
 }
-.radar-svg { width: 320px; height: 320px; flex: none; overflow: visible; }
+.radar-svg { width: 420px; height: 420px; flex: none; overflow: visible; }
 .ring { fill: none; stroke: #3a352c; stroke-width: 1; }
 .axis { stroke: #3a352c; stroke-width: 1; }
 .data-fill { fill: #b8985a; fill-opacity: 0.22; stroke: none; }
