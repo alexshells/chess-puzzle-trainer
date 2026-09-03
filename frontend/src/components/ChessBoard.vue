@@ -254,7 +254,7 @@ function viewLive() {
     />
 
     <div v-if="mode === 'mistake'" class="mistake-controls">
-      <p class="mistake-text">Not quite — that's not the puzzle move.</p>
+      <p class="mistake-text">Not quite — there's a better move.</p>
       <div class="mistake-actions">
         <button class="retry" @click="retry">Retry</button>
         <button class="give-up" @click="giveUp">Give up</button>
