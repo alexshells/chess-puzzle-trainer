@@ -34,6 +34,10 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   in transitively)
 - `vue-router` for `/` (puzzle solving), `/stats` (per-category rating chart
   + attempt history), and `/friends` (leaderboard)
+- `PuzzleView.vue` has a mode toggle (Rating / Weak Spots / Random) sent as
+  `?mode=` to `/api/puzzles/random`, shown only when signed in (an anonymous
+  request always gets Random server-side regardless, so the toggle would be
+  inert). Switching modes fetches a new puzzle immediately
 - No component library beyond that; styling is hand-written CSS, chess-themed
   palette (walnut/charcoal background `#1c1a17`, parchment text `#ede6d6`,
   brass accent `#b8985a`) — intentionally not generic SaaS-dashboard styling
@@ -75,14 +79,16 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     `backend/tests/Service/GlickoRatingServiceTest.php`). Runs after every
     puzzle attempt, treating each attempt as a one-game rating period
     against the puzzle's own rating, and writes the result onto `User`
-  - `PuzzleSelectionService`: rating-band heuristic — picks from a band
-    around the player's Glicko rating, sized by their rating deviation.
-    Deliberately the only place that decides "next puzzle" — the swap-in
-    point for `ml/`'s recommendations later; don't scatter puzzle-picking
-    logic into controllers. An explicit `?mode=random` query param, or an
-    anonymous request (no rating to match against), falls back to the
-    original uniform-random behavior
-    (`PuzzleRepository::findOneRandom()`), which still exists for that path
+  - `PuzzleSelectionService`: three explicit `?mode=` values
+    (`PuzzleSelectionMode`), a frontend-visible toggle on `/` (Rating /
+    Weak Spots / Random), not auto-detected — `rating` is a plain rating-band
+    pick; `weakness` asks `ml/` for biased themes and prefers an in-band
+    puzzle carrying one, falling back to the plain rating-band pick on an
+    empty list or no match; `random` is the original uniform-random
+    (`PuzzleRepository::findOneRandom()`). An anonymous request always gets
+    `random` regardless of what's asked, since there's no rating to band
+    around. Deliberately the only place that decides "next puzzle" — don't
+    scatter puzzle-picking logic into controllers
 - Puzzle data: Lichess's open CC0 puzzle database is the real source
   (https://database.lichess.org/#puzzles), imported via
   `bin/console app:import-puzzles` — **run with `APP_DEBUG=0`** for
@@ -181,9 +187,13 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   comparing observed miss rate against an Elo-style expected miss rate from
   their current rating (`ml/src/ml/weakness.py`) — themes missed
   disproportionately (min sample size 5, configurable via `MIN_SAMPLE_SIZE`)
-  come back as `biasedThemes`, worst-first. `PuzzleSelectionService` tries a
-  themed rating-band pick first, falling back to the plain rating-band pick
-  on an empty list or no in-band match
+  come back as `biasedThemes`, worst-first. Mines against the *full* raw
+  Lichess theme vocabulary (~60 tags) — deliberately not `PuzzleCategory`'s
+  11-category set, which exists for the `/stats` chart's readability, not
+  for selection bias; conflating the two would mean losing signal ml/
+  could otherwise act on (e.g. biasing toward "backRankMate" specifically
+  rather than all of "Checkmate"). `PuzzleSelectionService`'s `weakness`
+  mode is the only caller — see above
 - Phase 2/3 (further out): generating candidate puzzles from a player's own
   chess.com games, then generating positions from scratch when neither the
   puzzle database nor their games have enough natural examples of a

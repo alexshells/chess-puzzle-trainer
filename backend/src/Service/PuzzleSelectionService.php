@@ -35,15 +35,21 @@ class PuzzleSelectionService
         // still see some variety instead of only their exact rating.
         $band = max(self::MIN_BAND, (int) round($user->getRatingDeviation()));
 
-        // ml/ Phase 1 (weak-pattern targeting): ask for themes this user misses more
-        // than their rating predicts, and prefer a rating-band puzzle carrying one of
-        // them. Empty list (not enough attempts yet, or ml/ unreachable) or no matching
-        // puzzle in-band both fall through to the plain rating-band pick below.
-        $biasedThemes = $this->mlRecommendationClient->getBiasedThemes($user);
-        if ([] !== $biasedThemes) {
-            $themed = $this->puzzleRepository->findOneNearRatingWithThemes($user->getRating(), $band, $biasedThemes);
-            if (null !== $themed) {
-                return $themed;
+        if (PuzzleSelectionMode::Weakness === $mode) {
+            // ml/ Phase 1 (weak-pattern targeting): ask for themes this user misses more
+            // than their rating predicts, and prefer a rating-band puzzle carrying one of
+            // them. ml/ mines against the *full* raw Lichess theme vocabulary (~60 tags),
+            // not backend/'s 11-category PuzzleCategory set used for the /stats chart —
+            // those are deliberately separate, differently-grained signals (see
+            // MlRecommendationClient and CLAUDE.md). Empty list (not enough attempts yet,
+            // or ml/ unreachable) or no matching puzzle in-band both fall through to the
+            // plain rating-band pick below, same as Rating mode.
+            $biasedThemes = $this->mlRecommendationClient->getBiasedThemes($user);
+            if ([] !== $biasedThemes) {
+                $themed = $this->puzzleRepository->findOneNearRatingWithThemes($user->getRating(), $band, $biasedThemes);
+                if (null !== $themed) {
+                    return $themed;
+                }
             }
         }
 

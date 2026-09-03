@@ -27,11 +27,15 @@ export function clearSession() {
   localStorage.removeItem(TOKEN_STORAGE_KEY)
 }
 
-export async function fetchRandomPuzzle(token?: string): Promise<Puzzle> {
+/** Matches backend/'s PuzzleSelectionMode. Anonymous requests always get Random server-side regardless of what's sent. */
+export type PuzzleSelectionMode = 'rating' | 'weakness' | 'random'
+
+export async function fetchRandomPuzzle(token?: string, mode?: PuzzleSelectionMode): Promise<Puzzle> {
   const headers: Record<string, string> = {}
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const response = await fetch(`${API_BASE_URL}/api/puzzles/random`, { headers })
+  const query = mode ? `?mode=${mode}` : ''
+  const response = await fetch(`${API_BASE_URL}/api/puzzles/random${query}`, { headers })
   if (!response.ok) {
     throw new Error(`Failed to fetch puzzle: ${response.status}`)
   }
