@@ -6,6 +6,7 @@ use App\Entity\Puzzle;
 use App\Entity\PuzzleAttempt;
 use App\Entity\User;
 use App\Repository\PuzzleAttemptRepository;
+use App\Service\GlickoRatingService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -18,6 +19,7 @@ class PuzzleAttemptController
         private readonly Security $security,
         private readonly EntityManagerInterface $entityManager,
         private readonly PuzzleAttemptRepository $puzzleAttemptRepository,
+        private readonly GlickoRatingService $glickoRatingService,
     ) {
     }
 
@@ -38,11 +40,18 @@ class PuzzleAttemptController
         $user = $this->security->getUser();
 
         $attempt = new PuzzleAttempt($user, $puzzle, $data['success'], $data['timeSpentSeconds']);
+        $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
 
         $this->entityManager->persist($attempt);
         $this->entityManager->flush();
 
-        return new JsonResponse($this->serializeAttempt($attempt), 201);
+        return new JsonResponse([
+            ...$this->serializeAttempt($attempt),
+            // Only meaningful on the attempt just recorded — we don't store historical
+            // rating snapshots (see design doc §4), so this stays out of serializeAttempt()
+            // to avoid the list endpoint showing today's rating against every past row.
+            'userRating' => $user->getRating(),
+        ], 201);
     }
 
     #[Route('/api/me/attempts', methods: ['GET'])]
