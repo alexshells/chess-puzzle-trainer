@@ -31,4 +31,23 @@ class PuzzleAttemptRepository extends ServiceEntityRepository
             ->getQuery()
             ->getResult();
     }
+
+    /**
+     * Every attempt ever recorded, oldest first — replaying Glicko-2 updates
+     * in the order they actually happened only makes sense chronologically.
+     * Used by app:recompute-category-ratings to rebuild UserCategoryRating
+     * from source-of-truth attempt history after a category mapping change.
+     *
+     * @return PuzzleAttempt[]
+     */
+    public function findAllOrderedByCreatedAt(): array
+    {
+        return $this->createQueryBuilder('a')
+            ->addSelect('p', 'u')
+            ->join('a.puzzle', 'p')
+            ->join('a.user', 'u')
+            ->orderBy('a.createdAt', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
 }

@@ -39,11 +39,13 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   brass accent `#b8985a`) — intentionally not generic SaaS-dashboard styling
 - `RadarChart.vue`: hand-rolled SVG (no charting library) — one polygon per
   gridline ring, one accent-hue fill for the single data series, a hover +
-  focus tooltip per vertex, and a plain-text theme→rating list alongside it
-  as the accessible "table view" twin. Set `overflow: visible` on the `<svg>`
-  — labels at the horizontal extremes get clipped by the viewBox otherwise,
-  since side labels are anchored to grow outward from their point rather
-  than centered
+  focus tooltip per vertex, and a plain-text category→rating list alongside
+  it as the accessible "table view" twin. Set `overflow: visible` on the
+  `<svg>` — labels at the horizontal extremes get clipped by the viewBox
+  otherwise, since side labels are anchored to grow outward from their point
+  rather than centered. Labels come straight from the backend's `label`
+  field (see `PuzzleCategory` below) — no client-side humanizing needed
+  since the fixed category set replaced raw camelCase Lichess tags
 
 **Backend (`backend/`):**
 - Symfony (PHP), chosen over Spring Boot deliberately — see "Why Symfony"
@@ -64,7 +66,7 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   "friends list" framing rather than a directed follow graph — see
   `FriendshipController` and `Friendship`'s class doc for the invariants
   (no duplicate reverse row; a same-direction re-request flips an existing
-  reverse-pending row to accepted instead of erroring). `UserThemeRating`
+  reverse-pending row to accepted instead of erroring). `UserCategoryRating`
   (see below) is the sixth entity.
 - `GlickoRatingService` and `PuzzleSelectionService`: **built**.
   - `GlickoRatingService`: full Glicko-2 port, validated against Glickman's
@@ -110,17 +112,41 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   (200 rows) from the indexed rating-band range and filters for a theme
   match in PHP — fast, and correct as long as the band has reasonable theme
   density, which in practice it does
-- `UserThemeRating`: a real per-category Glicko-2 rating (own `rating`/
-  `ratingDeviation`/`volatility` columns, one row per `(user, theme)` pair),
-  not just a relative miss-rate signal — `User` and `UserThemeRating` both
-  implement a small `Rateable` interface so `GlickoRatingService::recordAttempt()`
-  is one implementation reused for both the overall rating and every theme
-  tag on the attempted puzzle (`PuzzleAttemptController`). This is a
-  different, later decision than `ml/`'s `user_pattern_weakness` (a delta
-  used only to bias puzzle *selection*) — `UserThemeRating` is what
-  `/stats`'s category chart reads, is the system of record for "how good are
-  you at forks," and lives in `backend/` since Glicko computation is
-  `backend/`'s home turf, not `ml/`'s
+- `PuzzleCategory`: a **fixed, small enum** (Checkmate, Fork, Pin, Skewer,
+  Discovered Attack, Sacrifice, Hanging Piece, Endgame) — deliberately not
+  Lichess's ~60 raw theme tags. `PuzzleCategoryMapper` maps raw tags onto it
+  (e.g. `mateIn1`/`mateIn2`/`mateIn3`/`backRankMate`/... all collapse to
+  `Checkmate`); most raw tags (difficulty, length, game phase, opponent
+  strength — "short", "crushing", "master", "middlegame") are deliberately
+  unmapped and contribute to no category. A puzzle can map to more than one
+  category (`["fork","mateIn2"]` → both Fork and Checkmate) or none. Changing
+  `PuzzleCategory`'s cases or the mapping is a real product decision (it's
+  what every user's `/stats` chart shows) — update both together, and run
+  `app:recompute-category-ratings` afterward (see below)
+- `UserCategoryRating`: a real per-category Glicko-2 rating (own `rating`/
+  `ratingDeviation`/`volatility` columns, one row per `(user, category)`
+  pair), not just a relative miss-rate signal — `User` and
+  `UserCategoryRating` both implement a small `Rateable` interface so
+  `GlickoRatingService::recordAttempt()` is one implementation reused for
+  both the overall rating and every category the attempted puzzle's themes
+  map to (`PuzzleAttemptController`). This is a different, later decision
+  than `ml/`'s `user_pattern_weakness` (a delta used only to bias puzzle
+  *selection*) — `UserCategoryRating` is what `/stats`'s category chart
+  reads, is the system of record for "how good are you at forks," and lives
+  in `backend/` since Glicko computation is `backend/`'s home turf, not
+  `ml/`'s. `UserCategoryRatingController` (`GET /api/me/category-ratings`)
+  always returns all of `PuzzleCategory::cases()`, in the same order,
+  defaulting to 1500/RD 350 for a category with no rows yet — the chart's
+  whole point is a fixed, always-the-same-shape set of axes, never "whatever
+  this user happens to have data in"
+- `app:recompute-category-ratings`: rebuilds `UserCategoryRating` from
+  scratch by replaying every `PuzzleAttempt` (source of truth) through the
+  current category mapping, in chronological order, via the same
+  `GlickoRatingService::recordAttempt()` used live. `UserCategoryRating` is
+  a derived projection — safe to wipe and regenerate entirely — so this is
+  the required step any time `PuzzleCategory` or `PuzzleCategoryMapper`
+  changes; neither the live per-attempt update nor a schema migration
+  touches already-computed rows on their own
 
 **ML/personalization (`ml/`):**
 - Python (FastAPI + SQLAlchemy + Alembic, `uv`-managed). Deliberately a

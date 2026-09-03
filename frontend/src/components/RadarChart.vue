@@ -1,25 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ThemeRating } from '../api'
+import type { CategoryRating } from '../api'
 
-const props = defineProps<{ ratings: ThemeRating[] }>()
+const props = defineProps<{ ratings: CategoryRating[] }>()
 
 const SIZE = 320
 const CENTER = SIZE / 2
 const RADIUS = 120
 const RING_FRACTIONS = [0.25, 0.5, 0.75, 1]
-const SMALL_WORDS = new Set(['in', 'of', 'the', 'a'])
-
-/** "mateIn2" -> "Mate in 2", "rookEndgame" -> "Rook Endgame" */
-function humanizeTheme(theme: string): string {
-  const words = theme
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/([a-zA-Z])([0-9]+)/g, '$1 $2')
-    .split(' ')
-  return words
-    .map((w, i) => (i > 0 && SMALL_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1)))
-    .join(' ')
-}
 
 // A tight domain would exaggerate small differences into a wildly spiky
 // shape, so the value range is padded and floored to a minimum span.
@@ -111,7 +99,7 @@ const hoveredIndex = ref<number | null>(null)
         v-bind="labelPosition(i)"
         class="axis-label"
       >
-        {{ humanizeTheme(r.theme) }}
+        {{ r.label }}
       </text>
 
       <g v-for="(p, i) in dataPoints" :key="`point-${i}`">
@@ -138,20 +126,20 @@ const hoveredIndex = ref<number | null>(null)
           rx="4"
         />
         <text :x="dataPoints[hoveredIndex]!.x" :y="dataPoints[hoveredIndex]!.y - 17" text-anchor="middle">
-          {{ humanizeTheme(ratings[hoveredIndex]!.theme) }}: {{ ratings[hoveredIndex]!.rating }}
+          {{ ratings[hoveredIndex]!.label }}: {{ ratings[hoveredIndex]!.rating }}
         </text>
       </g>
     </svg>
 
     <ul class="rating-list">
-      <li v-for="r in ratings" :key="r.theme">
-        <span>{{ humanizeTheme(r.theme) }}</span>
+      <li v-for="r in ratings" :key="r.category">
+        <span>{{ r.label }}</span>
         <span class="rating-value">{{ r.rating }}</span>
       </li>
     </ul>
   </div>
   <p v-else class="counter">
-    Solve a few more puzzles across different themes to see your category ratings.
+    Solve a few more puzzles to see your category ratings.
   </p>
 </template>
 

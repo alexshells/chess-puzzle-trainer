@@ -5,10 +5,11 @@ namespace App\Controller;
 use App\Entity\Puzzle;
 use App\Entity\PuzzleAttempt;
 use App\Entity\User;
-use App\Entity\UserThemeRating;
+use App\Entity\UserCategoryRating;
 use App\Repository\PuzzleAttemptRepository;
-use App\Repository\UserThemeRatingRepository;
+use App\Repository\UserCategoryRatingRepository;
 use App\Service\GlickoRatingService;
+use App\Service\PuzzleCategoryMapper;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -21,8 +22,9 @@ class PuzzleAttemptController
         private readonly Security $security,
         private readonly EntityManagerInterface $entityManager,
         private readonly PuzzleAttemptRepository $puzzleAttemptRepository,
-        private readonly UserThemeRatingRepository $userThemeRatingRepository,
+        private readonly UserCategoryRatingRepository $userCategoryRatingRepository,
         private readonly GlickoRatingService $glickoRatingService,
+        private readonly PuzzleCategoryMapper $puzzleCategoryMapper,
     ) {
     }
 
@@ -45,15 +47,15 @@ class PuzzleAttemptController
         $attempt = new PuzzleAttempt($user, $puzzle, $data['success'], $data['timeSpentSeconds']);
         $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
 
-        // Same update, once per theme tag on this puzzle — a puzzle tagged
-        // ["fork","endgame"] moves both category ratings independently of each
-        // other and of the overall rating above. This is what the /stats page's
-        // per-category chart reads.
-        foreach ($puzzle->getThemes() ?? [] as $theme) {
-            $themeRating = $this->userThemeRatingRepository->findOneForUserAndTheme($user, $theme)
-                ?? new UserThemeRating($user, $theme);
-            $this->glickoRatingService->recordAttempt($themeRating, $puzzle, $data['success']);
-            $this->entityManager->persist($themeRating);
+        // Same update, once per fixed category this puzzle's themes map to — a
+        // puzzle tagged ["fork","mateIn2"] moves both Fork and Checkmate
+        // independently of each other and of the overall rating above. This is
+        // what the /stats page's category chart reads.
+        foreach ($this->puzzleCategoryMapper->categoriesFor($puzzle->getThemes() ?? []) as $category) {
+            $categoryRating = $this->userCategoryRatingRepository->findOneForUserAndCategory($user, $category)
+                ?? new UserCategoryRating($user, $category);
+            $this->glickoRatingService->recordAttempt($categoryRating, $puzzle, $data['success']);
+            $this->entityManager->persist($categoryRating);
         }
 
         $this->entityManager->persist($attempt);

@@ -2,19 +2,20 @@
 
 namespace App\Entity;
 
-use App\Repository\UserThemeRatingRepository;
+use App\Repository\UserCategoryRatingRepository;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 
 /**
- * A player's Glicko-2 rating within a single Lichess theme tag (e.g. "fork"),
+ * A player's Glicko-2 rating within one of PuzzleCategory's fixed categories,
  * updated the same way as User's overall rating — see GlickoRatingService.
- * One row per (user, theme); themes a user has never attempted simply have
- * no row, rather than a row sitting at the 1500 default.
+ * One row per (user, category); a category the user has never attempted
+ * simply has no row (UserCategoryRatingController fills in the 1500 default
+ * for those, since the /stats chart always shows the full fixed set).
  */
-#[ORM\Entity(repositoryClass: UserThemeRatingRepository::class)]
-#[ORM\UniqueConstraint(name: 'uniq_user_theme', columns: ['user_id', 'theme'])]
-class UserThemeRating implements Rateable
+#[ORM\Entity(repositoryClass: UserCategoryRatingRepository::class)]
+#[ORM\UniqueConstraint(name: 'uniq_user_category', columns: ['user_id', 'category'])]
+class UserCategoryRating implements Rateable
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
@@ -25,8 +26,8 @@ class UserThemeRating implements Rateable
     #[ORM\JoinColumn(nullable: false)]
     private User $user;
 
-    #[ORM\Column(length: 64)]
-    private string $theme;
+    #[ORM\Column(enumType: PuzzleCategory::class)]
+    private PuzzleCategory $category;
 
     #[ORM\Column]
     private int $rating = 1500;
@@ -40,10 +41,10 @@ class UserThemeRating implements Rateable
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $updatedAt;
 
-    public function __construct(User $user, string $theme)
+    public function __construct(User $user, PuzzleCategory $category)
     {
         $this->user = $user;
-        $this->theme = $theme;
+        $this->category = $category;
         $this->updatedAt = new \DateTimeImmutable();
     }
 
@@ -57,9 +58,9 @@ class UserThemeRating implements Rateable
         return $this->user;
     }
 
-    public function getTheme(): string
+    public function getCategory(): PuzzleCategory
     {
-        return $this->theme;
+        return $this->category;
     }
 
     public function getRating(): int

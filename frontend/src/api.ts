@@ -89,14 +89,16 @@ export function fetchMyAttempts(token: string): Promise<AttemptRecord[]> {
   return request('/api/me/attempts', token)
 }
 
-export interface ThemeRating {
-  theme: string
+export interface CategoryRating {
+  category: string
+  label: string
   rating: number
   ratingDeviation: number
 }
 
-export function fetchThemeRatings(token: string): Promise<ThemeRating[]> {
-  return request('/api/me/theme-ratings', token)
+/** Always returns the same fixed set of categories, in the same order — see PuzzleCategory (backend). */
+export function fetchCategoryRatings(token: string): Promise<CategoryRating[]> {
+  return request('/api/me/category-ratings', token)
 }
 
 export interface LeaderboardEntry {

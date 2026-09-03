@@ -1,29 +1,29 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { fetchMyAttempts, fetchThemeRatings, type AttemptRecord, type ThemeRating } from '../api'
+import { fetchMyAttempts, fetchCategoryRatings, type AttemptRecord, type CategoryRating } from '../api'
 import { session } from '../session'
 import RadarChart from '../components/RadarChart.vue'
 
 const attempts = ref<AttemptRecord[]>([])
-const themeRatings = ref<ThemeRating[]>([])
+const categoryRatings = ref<CategoryRating[]>([])
 const error = ref('')
 const loading = ref(false)
 
 async function load() {
   if (!session.value) {
     attempts.value = []
-    themeRatings.value = []
+    categoryRatings.value = []
     return
   }
   loading.value = true
   error.value = ''
   try {
-    const [attemptsResult, themeRatingsResult] = await Promise.all([
+    const [attemptsResult, categoryRatingsResult] = await Promise.all([
       fetchMyAttempts(session.value.token),
-      fetchThemeRatings(session.value.token),
+      fetchCategoryRatings(session.value.token),
     ])
     attempts.value = attemptsResult
-    themeRatings.value = themeRatingsResult
+    categoryRatings.value = categoryRatingsResult
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load stats'
   } finally {
@@ -47,7 +47,7 @@ function formatTime(createdAt: string): string {
     <template v-else>
       <section>
         <h2>Rating by category</h2>
-        <RadarChart :ratings="themeRatings" />
+        <RadarChart :ratings="categoryRatings" />
       </section>
 
       <section>
