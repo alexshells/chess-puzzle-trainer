@@ -139,5 +139,6 @@ backend's PHP server with `-t public` from the wrong working directory
 I'm learning Vue/TypeScript hands-on and want to understand what's
 happening, not just get working code — explain non-obvious choices inline
 (comments or chat) rather than silently picking a fancier pattern over a
-simpler one I'd understand. I'd rather drive changes myself with help than
-have you take over large chunks unprompted.
+simpler one I'd understand. As of 2026-09-03 I'd rather you just make the
+edits directly (frontend included) than have me drive them myself — the
+explain-as-you-go part still stands, just not the "let me type it" part.
