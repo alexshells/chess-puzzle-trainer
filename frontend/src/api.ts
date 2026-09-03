@@ -27,8 +27,11 @@ export function clearSession() {
   localStorage.removeItem(TOKEN_STORAGE_KEY)
 }
 
-export async function fetchRandomPuzzle(): Promise<Puzzle> {
-  const response = await fetch(`${API_BASE_URL}/api/puzzles/random`)
+export async function fetchRandomPuzzle(token?: string): Promise<Puzzle> {
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const response = await fetch(`${API_BASE_URL}/api/puzzles/random`, { headers })
   if (!response.ok) {
     throw new Error(`Failed to fetch puzzle: ${response.status}`)
   }

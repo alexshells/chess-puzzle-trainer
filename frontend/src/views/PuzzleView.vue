@@ -20,7 +20,7 @@ let attemptRecorded = false
 async function nextPuzzle() {
   solved.value = false
   try {
-    currentPuzzle.value = await fetchRandomPuzzle()
+    currentPuzzle.value = await fetchRandomPuzzle(session.value?.token)
     usingFallback.value = false
   } catch {
     // Backend not running/unreachable — fall back to the hand-verified seed puzzles.

@@ -37,4 +37,43 @@ class PuzzleRepository extends ServiceEntityRepository
             ->getQuery()
             ->getOneOrNullResult();
     }
+
+    /** Uniform-random pick among puzzles rated within $band of $targetRating, or null if none fall in range. */
+    public function findOneNearRating(int $targetRating, int $band): ?Puzzle
+    {
+        $min = $targetRating - $band;
+        $max = $targetRating + $band;
+
+        $count = (int) $this->createQueryBuilder('p')
+            ->select('COUNT(p.id)')
+            ->where('p.rating BETWEEN :min AND :max')
+            ->setParameter('min', $min)
+            ->setParameter('max', $max)
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        if (0 === $count) {
+            return null;
+        }
+
+        return $this->createQueryBuilder('p')
+            ->where('p.rating BETWEEN :min AND :max')
+            ->setParameter('min', $min)
+            ->setParameter('max', $max)
+            ->setFirstResult(random_int(0, $count - 1))
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
+
+    /** Deterministic fallback for when no puzzle falls within any reasonable band — the single closest rating. */
+    public function findOneClosestToRating(int $targetRating): ?Puzzle
+    {
+        return $this->createQueryBuilder('p')
+            ->orderBy('ABS(p.rating - :target)', 'ASC')
+            ->setParameter('target', $targetRating)
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
 }
