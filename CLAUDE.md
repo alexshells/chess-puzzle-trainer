@@ -52,18 +52,24 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   `Puzzle` (rating is read via join, never duplicated onto the attempt row).
   Expected to grow additional per-attempt features over time as the ML side
   needs more signal — don't hardcode assumptions about this field set being
-  final. `Friendship` is designed but not yet built.
-- `GlickoRatingService` and `PuzzleSelectionService`: designed (see below)
-  but **not yet built** — puzzle selection today is uniform random
-  (`PuzzleRepository::findOneRandom()`), and no per-user rating is computed
-  anywhere yet (only the puzzle's own rating is ever stored)
-  - `GlickoRatingService`: full Glicko-2 port, validate against Glickman's
-    own published worked example before trusting it (rating 1500/RD 200/vol
-    0.06 vs three opponents → expect ~1464.06 / 151.52 / 0.05999)
-  - `PuzzleSelectionService`: rating-band heuristic, deliberately the only
-    place that decides "next puzzle" — the swap-in point for `ml/`'s
-    recommendations later; don't scatter puzzle-picking logic into
-    controllers
+  final. `User` also carries `rating`/`ratingDeviation`/`volatility`/
+  `ratingUpdatedAt` (Glicko-2 state). `Friendship` is designed but not yet
+  built.
+- `GlickoRatingService` and `PuzzleSelectionService`: **built**.
+  - `GlickoRatingService`: full Glicko-2 port, validated against Glickman's
+    own published worked example (rating 1500/RD 200/vol 0.06 vs three
+    opponents → ~1464.06 / 151.52 / 0.05999 — see
+    `backend/tests/Service/GlickoRatingServiceTest.php`). Runs after every
+    puzzle attempt, treating each attempt as a one-game rating period
+    against the puzzle's own rating, and writes the result onto `User`
+  - `PuzzleSelectionService`: rating-band heuristic — picks from a band
+    around the player's Glicko rating, sized by their rating deviation.
+    Deliberately the only place that decides "next puzzle" — the swap-in
+    point for `ml/`'s recommendations later; don't scatter puzzle-picking
+    logic into controllers. An explicit `?mode=random` query param, or an
+    anonymous request (no rating to match against), falls back to the
+    original uniform-random behavior
+    (`PuzzleRepository::findOneRandom()`), which still exists for that path
 - Puzzle data: Lichess's open CC0 puzzle database is the real source
   (https://database.lichess.org/#puzzles), imported via
   `bin/console app:import-puzzles` — **run with `APP_DEBUG=0`** for
