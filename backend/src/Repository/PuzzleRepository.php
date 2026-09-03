@@ -11,6 +11,15 @@ use Doctrine\Persistence\ManagerRegistry;
  */
 class PuzzleRepository extends ServiceEntityRepository
 {
+    /**
+     * How many rating-band candidates to pull back per theme-biased pick attempt.
+     * There's no way to index a JSON-array-of-strings "contains" check on this
+     * app's DBAL setup, and at 6M+ puzzle rows a LIKE scanning the full band
+     * (hundreds of thousands of rows) measured 3-10s — filtering a bounded
+     * sample in PHP instead keeps this to a single fast indexed range query.
+     */
+    private const THEME_SAMPLE_SIZE = 200;
+
     public function __construct(ManagerRegistry $registry)
     {
         parent::__construct($registry, Puzzle::class);
@@ -64,6 +73,55 @@ class PuzzleRepository extends ServiceEntityRepository
             ->setMaxResults(1)
             ->getQuery()
             ->getOneOrNullResult();
+    }
+
+    /**
+     * Uniform-random pick among puzzles rated within $band of $targetRating that
+     * also carry at least one of $themes — the theme-biased path ml/'s Phase 1
+     * recommendation feeds into. Null if no puzzle matches both constraints, so
+     * the caller can fall back to a plain rating-band pick.
+     *
+     * @param string[] $themes
+     */
+    public function findOneNearRatingWithThemes(int $targetRating, int $band, array $themes): ?Puzzle
+    {
+        if ([] === $themes) {
+            return null;
+        }
+
+        $min = $targetRating - $band;
+        $max = $targetRating + $band;
+
+        $count = (int) $this->createQueryBuilder('p')
+            ->select('COUNT(p.id)')
+            ->where('p.rating BETWEEN :min AND :max')
+            ->setParameter('min', $min)
+            ->setParameter('max', $max)
+            ->getQuery()
+            ->getSingleScalarResult();
+
+        if (0 === $count) {
+            return null;
+        }
+
+        $sampleSize = min($count, self::THEME_SAMPLE_SIZE);
+        $offset = random_int(0, $count - $sampleSize);
+
+        $candidates = $this->createQueryBuilder('p')
+            ->where('p.rating BETWEEN :min AND :max')
+            ->setParameter('min', $min)
+            ->setParameter('max', $max)
+            ->setFirstResult($offset)
+            ->setMaxResults($sampleSize)
+            ->getQuery()
+            ->getResult();
+
+        $matches = array_values(array_filter(
+            $candidates,
+            static fn (Puzzle $p) => [] !== array_intersect($p->getThemes() ?? [], $themes),
+        ));
+
+        return [] === $matches ? null : $matches[array_rand($matches)];
     }
 
     /** Deterministic fallback for when no puzzle falls within any reasonable band — the single closest rating. */

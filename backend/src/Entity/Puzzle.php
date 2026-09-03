@@ -6,6 +6,7 @@ use App\Repository\PuzzleRepository;
 use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity(repositoryClass: PuzzleRepository::class)]
+#[ORM\Index(columns: ['rating'], name: 'idx_puzzle_rating')]
 class Puzzle
 {
     #[ORM\Id]

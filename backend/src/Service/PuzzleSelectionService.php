@@ -17,6 +17,7 @@ class PuzzleSelectionService
 
     public function __construct(
         private readonly PuzzleRepository $puzzleRepository,
+        private readonly MlRecommendationClient $mlRecommendationClient,
     ) {
     }
 
@@ -33,6 +34,18 @@ class PuzzleSelectionService
         // its level; an established player (low RD) gets a tighter band, floored so they
         // still see some variety instead of only their exact rating.
         $band = max(self::MIN_BAND, (int) round($user->getRatingDeviation()));
+
+        // ml/ Phase 1 (weak-pattern targeting): ask for themes this user misses more
+        // than their rating predicts, and prefer a rating-band puzzle carrying one of
+        // them. Empty list (not enough attempts yet, or ml/ unreachable) or no matching
+        // puzzle in-band both fall through to the plain rating-band pick below.
+        $biasedThemes = $this->mlRecommendationClient->getBiasedThemes($user);
+        if ([] !== $biasedThemes) {
+            $themed = $this->puzzleRepository->findOneNearRatingWithThemes($user->getRating(), $band, $biasedThemes);
+            if (null !== $themed) {
+                return $themed;
+            }
+        }
 
         return $this->puzzleRepository->findOneNearRating($user->getRating(), $band)
             ?? $this->puzzleRepository->findOneClosestToRating($user->getRating());

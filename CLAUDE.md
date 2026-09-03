@@ -18,11 +18,9 @@ feature slice, not the full original vision.
 
 ## Current state
 
-Working name: **Blindspot**. Frontend and backend both exist in this repo,
-under `frontend/` and `backend/` respectively (monorepo, not separate repos —
-see the design doc's Architecture section for why, once that's written). A
-third top-level service, `ml/` (Python), is designed but not yet built —
-don't assume it exists until you've checked.
+Working name: **Blindspot**. All three top-level services now exist in this
+monorepo: `frontend/`, `backend/`, and `ml/` (Python) — see the design doc's
+Architecture section for why one repo, not three.
 
 Live design doc (Artifact, grows section by section as it's worked through):
 https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
@@ -79,28 +77,55 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   `bin/console app:import-puzzles` — **run with `APP_DEBUG=0`** for
   anything beyond a few thousand rows, Doctrine's dev-mode query/backtrace
   logger grows unbounded and will OOM well before finishing a full import.
-  A handful of hand-built, python-chess-verified puzzles also exist in the
-  frontend (`frontend/src/puzzles.ts`) as an offline fallback shown when the
-  backend is unreachable — those aren't backend-tracked and never recorded
-  to attempt history
+  6.1M rows imported locally. A handful of hand-built, python-chess-verified
+  puzzles also exist in the frontend (`frontend/src/puzzles.ts`) as an
+  offline fallback shown when the backend is unreachable — those aren't
+  backend-tracked and never recorded to attempt history
+- `Puzzle.rating` has a DB index (`idx_puzzle_rating`) — at 6.1M rows, both
+  rating-band selection and the ml/ theme-bias path filter on it, and it was
+  a 3s+ full table scan without one. `Puzzle.themes` (and `.solution`) are
+  `array`-typed properties that Doctrine maps to `Types::JSON`, i.e. stored
+  as real JSON text (not PHP's serialize format) — this is what makes them
+  readable by `ml/` without an export step
+- `MlRecommendationClient`: the only thing in `backend/` that knows `ml/`
+  exists. Calls `ml/`'s recommendation endpoint with a short timeout
+  (500ms) and swallows every failure mode into an empty theme list — `ml/`
+  being down or slow must never break a puzzle load. Use `127.0.0.1`, not
+  `localhost`, for `ML_SERVICE_URL`: on Windows, curl's IPv6-then-IPv4
+  fallback for "localhost" adds several seconds even when nothing's
+  listening, which defeats the timeout
+- `PuzzleRepository::findOneNearRatingWithThemes()`: there's no indexable
+  "JSON array contains" check available here, and at this row count a
+  `LIKE '%"theme"%'` scan across a whole rating band (hundreds of thousands
+  of rows) measured 3-10s. It instead pulls a bounded random sample
+  (200 rows) from the indexed rating-band range and filters for a theme
+  match in PHP — fast, and correct as long as the band has reasonable theme
+  density, which in practice it does
 
-**ML/personalization (`ml/`, planned, not yet in repo):**
-- Python, deliberately a separate deployable service from `backend/` (not
-  in-process PHP) — ML tooling is overwhelmingly Python-ecosystem, and this
-  is the part of the product meant to grow well past simple heuristics
-- Reads `Puzzle`/`PuzzleAttempt` directly from the same MySQL database
-  Symfony writes to (no export/ETL pipeline) — may own its own derived
-  tables (e.g. computed weak-patterns-per-user) that only it writes to.
-  This means schema changes are a contract shared with `backend/`: touch
-  both sides deliberately, don't change `Puzzle`/`PuzzleAttempt` shape
-  without checking what `ml/` reads
+**ML/personalization (`ml/`):**
+- Python (FastAPI + SQLAlchemy + Alembic, `uv`-managed). Deliberately a
+  separate deployable service from `backend/` (not in-process PHP) — ML
+  tooling is overwhelmingly Python-ecosystem, and this is the part of the
+  product meant to grow well past simple heuristics
+- Reads `Puzzle`/`PuzzleAttempt`/`User` directly from the same database
+  `backend/` writes to (no export/ETL pipeline) — via plain SQLAlchemy Core
+  `Table` objects in `ml/src/ml/db.py`, kept in a separate `MetaData` from
+  ml/'s own tables so Alembic never touches Doctrine-owned schema (and vice
+  versa: `PuzzleRepository` never queries `user_pattern_weakness`). Owns one
+  derived table, `user_pattern_weakness` (per-user, per-theme miss rate),
+  migrated with Alembic (`uv run alembic upgrade head` from `ml/`) — this is
+  a real, separate migration history from `backend/migrations/`, on purpose
 - The frontend never talks to `ml/` directly — only `backend/` does,
-  server-to-server; `backend/` stays the single public-facing API
-- Phase 1 (committed): weak-pattern targeting — mine attempt history for
-  pattern types (mate-in-N, forks, pins, ...) where a player's miss rate is
-  disproportionate to their rating, bias selection toward those. Lichess's
-  theme tags are already imported into `Puzzle.themes` and sitting there
-  unused — this phase reads that, doesn't need new data collection first
+  server-to-server via `MlRecommendationClient`; `backend/` stays the single
+  public-facing API
+- Phase 1 (built): weak-pattern targeting. `GET /users/{id}/recommendation`
+  mines that user's `PuzzleAttempt` history, grouped by `Puzzle.themes` tag,
+  comparing observed miss rate against an Elo-style expected miss rate from
+  their current rating (`ml/src/ml/weakness.py`) — themes missed
+  disproportionately (min sample size 5, configurable via `MIN_SAMPLE_SIZE`)
+  come back as `biasedThemes`, worst-first. `PuzzleSelectionService` tries a
+  themed rating-band pick first, falling back to the plain rating-band pick
+  on an empty list or no in-band match
 - Phase 2/3 (further out): generating candidate puzzles from a player's own
   chess.com games, then generating positions from scratch when neither the
   puzzle database nor their games have enough natural examples of a
@@ -137,12 +162,21 @@ npm run dev      # Vite dev server, http://localhost:5173
 cd backend
 php -S localhost:8000 -t public   # http://localhost:8000 — frontend's
                                    # VITE_API_BASE_URL points here by default
+
+cd ml
+uv run uvicorn ml.main:app --port 8001   # backend's ML_SERVICE_URL points here
+uv run alembic upgrade head               # apply ml/'s own migrations
+uv run pytest
 ```
 
-Both directories have their own `public/` — a common mistake is running the
-backend's PHP server with `-t public` from the wrong working directory
-(check `ls public/index.php` first if `/api/...` routes 404 with
+Both `frontend/` and `backend/` have their own `public/` — a common mistake
+is running the backend's PHP server with `-t public` from the wrong working
+directory (check `ls public/index.php` first if `/api/...` routes 404 with
 "No such file or directory").
+
+`ml/` is optional for local dev — `backend/` degrades gracefully (plain
+rating-band selection) if it's not running, so you don't need it up just to
+solve puzzles. Start it when working on weak-pattern targeting specifically.
 
 ## Working style
 
