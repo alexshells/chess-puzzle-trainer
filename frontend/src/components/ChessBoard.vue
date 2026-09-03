@@ -16,7 +16,10 @@ export interface Puzzle {
   rating?: number // absent for the hand-built offline fallback puzzles, which aren't Lichess-rated
 }
 
-type Mode = 'setup' | 'solving' | 'mistake' | 'solved'
+type Mode = 'setup' | 'solving' | 'mistake' | 'solved' | 'given-up'
+
+/** Delay between auto-played moves when revealing the solution after "Give up". */
+const GIVE_UP_REPLAY_DELAY_MS = 500
 
 const props = withDefaults(
   defineProps<{
@@ -28,6 +31,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   solved: []
   mistake: [attempted: string, expected: string]
+  'gave-up': []
   'position-changed': [fen: string, ply: number]
 }>()
 
@@ -156,6 +160,38 @@ function retry() {
   syncStatus()
 }
 
+/**
+ * Reveals the rest of the solution and counts as a failed attempt — same
+ * accounting as a wrong move, just chosen instead of found. Undoes a pending
+ * mistaken move first (if any) so the replay isn't confused by it, then
+ * auto-plays the remaining solution moves one at a time so the sequence
+ * reads as a replay rather than snapping straight to the end.
+ */
+function giveUp() {
+  if (mode.value !== 'solving' && mode.value !== 'mistake') return
+
+  if (mode.value === 'mistake') {
+    boardApi?.undoLastMove()
+  }
+  boardApi?.setConfig({ viewOnly: true })
+
+  const remainingMoves = props.puzzle?.solution.slice(solutionIndex.value) ?? []
+
+  const playNext = (i: number) => {
+    if (i >= remainingMoves.length) {
+      solutionIndex.value += remainingMoves.length
+      mode.value = 'given-up'
+      syncStatus()
+      emit('gave-up')
+      return
+    }
+    playMove(remainingMoves[i]!)
+    syncStatus()
+    setTimeout(() => playNext(i + 1), GIVE_UP_REPLAY_DELAY_MS)
+  }
+  playNext(0)
+}
+
 function emitPositionChanged() {
   if (!boardApi) return
   emit('position-changed', boardApi.getFen(), boardApi.getCurrentPlyNumber())
@@ -188,7 +224,7 @@ function restartPuzzle() {
   mode.value = 'setup'
 }
 
-// --- post-solve review navigation (mode === 'solved') ---
+// --- post-solve review navigation (mode === 'solved' or 'given-up') ---
 function viewStart() {
   boardApi?.viewStart()
 }
@@ -219,7 +255,22 @@ function viewLive() {
 
     <div v-if="mode === 'mistake'" class="mistake-controls">
       <p class="mistake-text">Not quite — that's not the puzzle move.</p>
-      <button class="retry" @click="retry">Retry</button>
+      <div class="mistake-actions">
+        <button class="retry" @click="retry">Retry</button>
+        <button class="give-up" @click="giveUp">Give up</button>
+      </div>
+    </div>
+
+    <button v-if="mode === 'solving'" class="give-up" @click="giveUp">Give up</button>
+
+    <div v-if="mode === 'given-up'" class="given-up-controls">
+      <p class="given-up-text">Here's the solution:</p>
+      <div class="review-controls">
+        <button @click="viewStart">|&lt;</button>
+        <button @click="viewPrevious">&lt;</button>
+        <button @click="viewNext">&gt;</button>
+        <button @click="viewLive">&gt;|</button>
+      </div>
     </div>
 
     <div v-if="mode === 'solved'" class="review-controls">
@@ -262,8 +313,12 @@ function viewLive() {
 .mistake-controls { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
 .mistake-text { color: #cfc6b3; font-size: 0.9rem; margin: 0; }
 .review-controls { display: flex; gap: 0.4rem; }
+.mistake-actions { display: flex; gap: 0.5rem; }
+.given-up-controls { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+.given-up-text { color: #cfc6b3; font-size: 0.9rem; margin: 0; }
 .restart,
 .retry,
+.give-up,
 .review-controls button {
   background: transparent;
   color: #ede6d6;
@@ -272,4 +327,5 @@ function viewLive() {
   padding: 0.4rem 0.9rem;
   cursor: pointer;
 }
+.give-up { border-color: #6b6459; color: #cfc6b3; }
 </style>

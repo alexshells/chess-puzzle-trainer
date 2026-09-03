@@ -7,6 +7,7 @@ import { session } from '../session'
 
 const currentPuzzle = ref<Puzzle | null>(null)
 const solved = ref(false)
+const gaveUp = ref(false)
 const solvedCount = ref(0)
 const usingFallback = ref(false)
 let fallbackIndex = 0
@@ -19,6 +20,7 @@ let attemptRecorded = false
 
 async function nextPuzzle() {
   solved.value = false
+  gaveUp.value = false
   try {
     currentPuzzle.value = await fetchRandomPuzzle(session.value?.token)
     usingFallback.value = false
@@ -52,14 +54,19 @@ function handleMistake() {
   maybeRecordAttempt(false)
 }
 
+function handleGaveUp() {
+  gaveUp.value = true
+  maybeRecordAttempt(false)
+}
+
 onMounted(nextPuzzle)
 </script>
 
 <template>
   <p class="counter">{{ solvedCount }} puzzles solved this session</p>
   <p v-if="usingFallback" class="counter">Backend unreachable — showing an offline seed puzzle</p>
-  <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" />
-  <button v-if="solved" class="next" @click="nextPuzzle">Next puzzle →</button>
+  <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" @gave-up="handleGaveUp" />
+  <button v-if="solved || gaveUp" class="next" @click="nextPuzzle">Next puzzle →</button>
 </template>
 
 <style scoped>
