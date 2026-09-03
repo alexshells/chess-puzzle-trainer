@@ -53,8 +53,12 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   Expected to grow additional per-attempt features over time as the ML side
   needs more signal — don't hardcode assumptions about this field set being
   final. `User` also carries `rating`/`ratingDeviation`/`volatility`/
-  `ratingUpdatedAt` (Glicko-2 state). `Friendship` is designed but not yet
-  built.
+  `ratingUpdatedAt` (Glicko-2 state). `Friendship` is built: mutual,
+  single row per pair (`requester`/`addressee`/`status`), matching the
+  "friends list" framing rather than a directed follow graph — see
+  `FriendshipController` and `Friendship`'s class doc for the invariants
+  (no duplicate reverse row; a same-direction re-request flips an existing
+  reverse-pending row to accepted instead of erroring).
 - `GlickoRatingService` and `PuzzleSelectionService`: **built**.
   - `GlickoRatingService`: full Glicko-2 port, validated against Glickman's
     own published worked example (rating 1500/RD 200/vol 0.06 vs three

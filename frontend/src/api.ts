@@ -49,6 +49,8 @@ async function request<T>(path: string, token?: string, init?: RequestInit): Pro
     throw new Error(payload?.error ?? `Request to ${path} failed: ${response.status}`)
   }
 
+  if (response.status === 204) return undefined as T
+
   return response.json()
 }
 
@@ -85,4 +87,41 @@ export interface AttemptRecord {
 
 export function fetchMyAttempts(token: string): Promise<AttemptRecord[]> {
   return request('/api/me/attempts', token)
+}
+
+export interface LeaderboardEntry {
+  friendshipId: number | null
+  userId: number
+  email: string
+  rating: number
+  isYou: boolean
+}
+
+export interface FriendRequest {
+  friendshipId: number
+  userId: number
+  email: string
+  rating: number
+}
+
+export interface FriendsData {
+  leaderboard: LeaderboardEntry[]
+  incomingRequests: FriendRequest[]
+  outgoingRequests: FriendRequest[]
+}
+
+export function fetchFriends(token: string): Promise<FriendsData> {
+  return request('/api/friends', token)
+}
+
+export function sendFriendRequest(email: string, token: string): Promise<unknown> {
+  return postJson('/api/friends', { email }, token)
+}
+
+export function acceptFriendRequest(friendshipId: number, token: string): Promise<unknown> {
+  return postJson(`/api/friends/${friendshipId}/accept`, {}, token)
+}
+
+export function removeFriendship(friendshipId: number, token: string): Promise<void> {
+  return request(`/api/friends/${friendshipId}`, token, { method: 'DELETE' })
 }
