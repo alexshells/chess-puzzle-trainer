@@ -221,7 +221,9 @@ Live as of 2026-09-04: **backend + MySQL on Railway** (`backend/Dockerfile`),
 per its own design, the backend degrades gracefully without it, so there was
 no need to stand it up just to get puzzles playable.
 
-- Frontend: https://blindspot-woad.vercel.app
+- Frontend: https://blindspotchess.com (custom domain, registered via Vercel
+  Domains; `blindspot-woad.vercel.app` still works too — kept in
+  `CORS_ALLOW_ORIGIN` as a fallback)
 - Backend: https://backend-production-23040.up.railway.app
 
 Both projects were created via `railway`/`vercel` CLIs, linked to this
