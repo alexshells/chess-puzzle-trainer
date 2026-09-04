@@ -216,15 +216,21 @@ deliberate choice for depth over breadth. If this changes, update this file.
 
 ## Deployment
 
-Live as of 2026-09-04: **backend + MySQL on Railway** (`backend/Dockerfile`),
-**frontend on Vercel** (static Vite build). `ml/` is not deployed anywhere —
-per its own design, the backend degrades gracefully without it, so there was
-no need to stand it up just to get puzzles playable.
+Live as of 2026-09-04: **backend + MySQL + ml/ on Railway** (each its own
+Dockerfile — `backend/Dockerfile`, `ml/Dockerfile`), **frontend on Vercel**
+(static Vite build).
 
 - Frontend: https://blindspotchess.com (custom domain, registered via Vercel
   Domains; `blindspot-woad.vercel.app` still works too — kept in
   `CORS_ALLOW_ORIGIN` as a fallback)
 - Backend: https://backend-production-23040.up.railway.app
+- ml/: no public domain — reached only over Railway's private network at
+  `http://ml.railway.internal:8001` (`ML_SERVICE_URL` on the backend
+  service). Deliberately internal-only: `GET /users/{id}/recommendation`
+  has no auth, so exposing it publicly would let anyone enumerate any
+  user's mined weaknesses by guessing IDs. A public domain existed briefly
+  during setup (to hit `/health` directly while wiring things up) and was
+  removed once private networking was confirmed working.
 
 Both projects were created via `railway`/`vercel` CLIs, linked to this
 directory (`railway.json`-equivalent state lives in Railway's own project,
@@ -272,6 +278,27 @@ gitignored).
   scripted. Once trusted once from a given machine, subsequent `railway ssh`
   calls from that same machine (Claude Code's Bash tool included, since it
   shares the same `~/.ssh/known_hosts`) work non-interactively.
+- **ml/ needed `pymysql` added** (`uv add pymysql`) — it only had SQLite
+  support out of the box locally, since dev always ran against
+  `backend/var/data_dev.db`. Production `DATABASE_URL` uses
+  `mysql+pymysql://` (SQLAlchemy's dialect+driver scheme), not Doctrine's
+  plain `mysql://` — same credentials, different URL shape, so it's a
+  separate Railway variable from backend's, not a shared reference.
+- **ml/'s Railway service needed an explicit `PORT=8001`.** Without one,
+  Railway assigns a dynamic port each deploy that isn't predictable ahead
+  of time, and the backend needs to know it upfront to build
+  `ML_SERVICE_URL` — unlike the MySQL plugin, which exposes its port as a
+  stable `MYSQLPORT` variable another service can reference.
+- **Weak-spot theme matches are hit-or-miss with only ~30K puzzles seeded**
+  (verified live: 1 of 5 `?mode=weakness` requests actually got a
+  themed puzzle, the rest fell back to plain rating-band selection — both
+  are correct, documented behavior, see `PuzzleSelectionService`). The
+  200-row in-band sample `findOneNearRatingWithThemes()` pulls just often
+  doesn't contain a puzzle carrying the biased theme at our seed density,
+  whereas the design assumed the full 6.1M-row Lichess set. Importing more
+  puzzles (or narrowing the sample to fewer, denser bands) would raise the
+  hit rate; not done since ~30K is enough for the site itself to feel fully
+  populated.
 
 ## Open items / unverified
 
