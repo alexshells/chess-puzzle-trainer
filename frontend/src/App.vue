@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import AuthPanel from './components/AuthPanel.vue'
 import { session, setSession, logout } from './session'
 import { MODES, puzzleMode } from './puzzleMode'
 
 const route = useRoute()
+const router = useRouter()
+
+function selectMode(mode: (typeof MODES)[number]['value']) {
+  puzzleMode.value = mode
+  if (route.path !== '/') router.push('/')
+}
 </script>
 
 <template>
@@ -12,20 +18,22 @@ const route = useRoute()
     <div class="toolbar-nav">
       <span class="brand">Blindspot</span>
       <nav v-if="session" class="nav">
-        <RouterLink to="/">Puzzles</RouterLink>
+        <div class="nav-item has-submenu">
+          <RouterLink to="/">Puzzles</RouterLink>
+          <div class="submenu">
+            <button
+              v-for="m in MODES"
+              :key="m.value"
+              :class="{ active: puzzleMode === m.value }"
+              @click="selectMode(m.value)"
+            >
+              {{ m.label }}
+            </button>
+          </div>
+        </div>
         <RouterLink to="/stats">Stats</RouterLink>
         <RouterLink to="/friends">Friends</RouterLink>
       </nav>
-      <div v-if="session && route.path === '/'" class="mode-select">
-        <button
-          v-for="m in MODES"
-          :key="m.value"
-          :class="{ active: puzzleMode === m.value }"
-          @click="puzzleMode = m.value"
-        >
-          {{ m.label }}
-        </button>
-      </div>
     </div>
 
     <div class="toolbar-account">
@@ -88,8 +96,26 @@ main { padding: 2rem 1rem; text-align: center; display: flex; flex-direction: co
   border-bottom-color: #b8985a;
 }
 
-.mode-select { display: flex; gap: 0.4rem; }
-.mode-select button {
+.nav-item.has-submenu { position: relative; padding-bottom: 0.6rem; margin-bottom: -0.6rem; }
+.nav-item.has-submenu .submenu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: #242019;
+  border: 1px solid #3a352c;
+  border-radius: 6px;
+  padding: 0.4rem;
+  margin-top: 0.35rem;
+  z-index: 10;
+}
+.nav-item.has-submenu:hover .submenu,
+.nav-item.has-submenu:focus-within .submenu {
+  display: flex;
+}
+.submenu button {
   background: transparent;
   color: #cfc6b3;
   border: 1px solid #47423a;
@@ -97,8 +123,10 @@ main { padding: 2rem 1rem; text-align: center; display: flex; flex-direction: co
   padding: 0.3rem 0.7rem;
   font-size: 0.85rem;
   cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
 }
-.mode-select button.active {
+.submenu button.active {
   color: #ede6d6;
   border-color: #b8985a;
 }
