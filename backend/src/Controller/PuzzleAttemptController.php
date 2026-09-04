@@ -44,18 +44,31 @@ class PuzzleAttemptController
         /** @var User $user */
         $user = $this->security->getUser();
 
+        $ratingBefore = $user->getRating();
+
         $attempt = new PuzzleAttempt($user, $puzzle, $data['success'], $data['timeSpentSeconds']);
         $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
 
         // Same update, once per fixed category this puzzle's themes map to — a
         // puzzle tagged ["fork","mateIn2"] moves both Fork and Checkmate
         // independently of each other and of the overall rating above. This is
-        // what the /stats page's category chart reads.
+        // what the /stats page's category chart reads, and (for puzzles served
+        // in weakness mode) what the frontend shows alongside the overall
+        // rating change — the whole point of that mode is seeing whether the
+        // targeted category actually moved.
+        $categoryRatingChanges = [];
         foreach ($this->puzzleCategoryMapper->categoriesFor($puzzle->getThemes() ?? []) as $category) {
             $categoryRating = $this->userCategoryRatingRepository->findOneForUserAndCategory($user, $category)
                 ?? new UserCategoryRating($user, $category);
+            $categoryRatingBefore = $categoryRating->getRating();
             $this->glickoRatingService->recordAttempt($categoryRating, $puzzle, $data['success']);
             $this->entityManager->persist($categoryRating);
+
+            $categoryRatingChanges[] = [
+                'category' => $category->value,
+                'label' => $category->label(),
+                'ratingChange' => $categoryRating->getRating() - $categoryRatingBefore,
+            ];
         }
 
         $this->entityManager->persist($attempt);
@@ -67,6 +80,8 @@ class PuzzleAttemptController
             // rating snapshots (see design doc §4), so this stays out of serializeAttempt()
             // to avoid the list endpoint showing today's rating against every past row.
             'userRating' => $user->getRating(),
+            'ratingChange' => $user->getRating() - $ratingBefore,
+            'categoryRatingChanges' => $categoryRatingChanges,
         ], 201);
     }
 

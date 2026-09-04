@@ -130,13 +130,6 @@ const hoveredIndex = ref<number | null>(null)
         </text>
       </g>
     </svg>
-
-    <ul class="rating-list">
-      <li v-for="r in ratings" :key="r.category">
-        <span>{{ r.label }}</span>
-        <span class="rating-value">{{ r.rating }}</span>
-      </li>
-    </ul>
   </div>
   <p v-else class="counter">
     Solve a few more puzzles to see your category ratings.
@@ -163,20 +156,5 @@ const hoveredIndex = ref<number | null>(null)
 .tooltip rect { fill: #242019; stroke: #3a352c; stroke-width: 1; }
 .tooltip text { fill: #ede6d6; font-size: 11px; }
 
-.rating-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  font-size: 0.9rem;
-  min-width: 160px;
-}
-.rating-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.3rem 0;
-  border-bottom: 1px solid #33302a;
-}
-.rating-value { color: #b8985a; font-weight: 600; }
 .counter { color: #cfc6b3; font-size: 0.9rem; }
 </style>

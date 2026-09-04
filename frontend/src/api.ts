@@ -70,13 +70,31 @@ export function login(email: string, password: string): Promise<AuthSession> {
   return postJson('/api/login', { email, password })
 }
 
+export interface CategoryRatingChange {
+  category: string
+  label: string
+  ratingChange: number
+}
+
+export interface AttemptResult {
+  id: number
+  puzzleId: number
+  puzzleRating: number
+  success: boolean
+  timeSpentSeconds: number
+  createdAt: string
+  userRating: number
+  ratingChange: number
+  categoryRatingChanges: CategoryRatingChange[]
+}
+
 /** Records one attempt per puzzle load — the first mistake or the solve, whichever comes first. */
 export function recordAttempt(
   puzzleId: number,
   success: boolean,
   timeSpentSeconds: number,
   token: string,
-): Promise<unknown> {
+): Promise<AttemptResult> {
   return postJson(`/api/puzzles/${puzzleId}/attempts`, { success, timeSpentSeconds }, token)
 }
 
