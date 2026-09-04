@@ -214,11 +214,68 @@ deliberate choice for depth over breadth. If this changes, update this file.
 - **Windows + Git Bash** is the dev environment. Prefer commands that work
   there; flag anything that specifically needs WSL or PowerShell.
 
+## Deployment
+
+Live as of 2026-09-04: **backend + MySQL on Railway** (`backend/Dockerfile`),
+**frontend on Vercel** (static Vite build). `ml/` is not deployed anywhere —
+per its own design, the backend degrades gracefully without it, so there was
+no need to stand it up just to get puzzles playable.
+
+- Frontend: https://blindspot-woad.vercel.app
+- Backend: https://backend-production-23040.up.railway.app
+
+Both projects were created via `railway`/`vercel` CLIs, linked to this
+directory (`railway.json`-equivalent state lives in Railway's own project,
+not checked into the repo; same for `frontend/.vercel/`, which is
+gitignored).
+
+- **Backend runs on FrankenPHP, not Apache** — `php:8.4-apache` crash-looped
+  on startup with `AH00534: More than one MPM loaded`, but build-time
+  diagnostics showed a clean single-MPM `mods-enabled` state every time,
+  meaning the same config produced different results at build vs. run time
+  for reasons that never resolved. Not worth chasing further: FrankenPHP is
+  Symfony's own recommended production runtime anyway, sidesteps Apache's
+  module system entirely, and takes Railway's dynamic `$PORT` directly via
+  `frankenphp php-server --listen :$PORT` — no config templating needed.
+- **`ENV COMPOSER_ALLOW_SUPERUSER=1`** is required in the Dockerfile.
+  Composer silently disables all plugins (including `symfony/runtime`'s,
+  which generates `vendor/autoload_runtime.php`) when running as root —
+  which every RUN step in a Dockerfile does unless a `USER` is set — and
+  says nothing louder than a one-line notice buried in script output. Without
+  it, `public/index.php` fails on a missing `autoload_runtime.php` with no
+  hint why.
+- **The committed migrations are SQLite-only** — they were generated via
+  `doctrine:migrations:diff` against the local SQLite dev DB and hardcode
+  SQLite DDL (`AUTOINCREMENT`, etc.) via raw `addSql()` calls rather than
+  Doctrine's portable schema builder, so none of them run against MySQL
+  as-is. The production schema was bootstrapped directly from current
+  entity metadata instead (`doctrine:schema:create`, platform-correct
+  since it introspects whatever's actually connected), then migration
+  history was backfilled (`doctrine:migrations:version --add --all`) so
+  future migrations still layer on cleanly. The migration files themselves
+  haven't been fixed — regenerating them portably, or maintaining
+  MySQL-specific versions, is still open.
+- **Puzzle data**: production has ~30K puzzles (a stride sample across the
+  full local rating range, exported from the 6.1M-row local dev DB), not
+  the full Lichess set — plenty for casual play, far cheaper than importing
+  everything.
+- **Railway service filesystem is ephemeral** — any `railway service files
+  upload` lands in that specific running container and is lost on the next
+  deploy/restart (including one triggered by `railway variable set`,
+  learned the hard way mid-puzzle-import). MySQL data itself persists fine
+  (own volume) — only files uploaded straight to the backend container
+  don't.
+- **`railway ssh`**'s host key is validated per-machine, not injected by the
+  CLI — first connection needs an interactive yes/trust, which cannot be
+  scripted. Once trusted once from a given machine, subsequent `railway ssh`
+  calls from that same machine (Claude Code's Bash tool included, since it
+  shares the same `~/.ssh/known_hosts`) work non-interactively.
+
 ## Open items / unverified
 
-(none currently — the `check`-after-`move` event ordering in
-`ChessBoard.vue` was verified in the browser against a real puzzle and
-behaves as assumed.)
+- Migrations in `backend/migrations/` are SQLite-flavored and don't run on
+  MySQL (see Deployment above) — worth rewriting with Doctrine's schema
+  builder at some point so prod and a fresh dev setup follow the same path.
 
 ## Commands
 
