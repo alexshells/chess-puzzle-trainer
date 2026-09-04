@@ -57,12 +57,13 @@ async function submit() {
 </template>
 
 <style scoped>
+/* Row-oriented to sit inline in the top toolbar (its only usage site) —
+   wraps naturally on narrow screens since the toolbar itself wraps. */
 .auth-panel {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
-  width: 220px;
-  margin: 0 auto 1rem;
 }
 input {
   background: transparent;
@@ -71,6 +72,7 @@ input {
   padding: 0.4rem 0.6rem;
   color: #ede6d6;
   font-size: 0.9rem;
+  width: 130px;
 }
 input::placeholder {
   color: #7d7568;
@@ -78,7 +80,6 @@ input::placeholder {
 .actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
 }
 button[type='submit'] {
@@ -103,8 +104,10 @@ button[type='submit']:disabled {
   padding: 0;
 }
 .error {
+  flex-basis: 100%;
   color: #d98c8c;
   font-size: 0.8rem;
   margin: 0;
+  text-align: right;
 }
 </style>

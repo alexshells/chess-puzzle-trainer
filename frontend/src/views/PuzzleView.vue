@@ -1,18 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import ChessBoard, { type Puzzle } from '../components/ChessBoard.vue'
-import { fetchRandomPuzzle, recordAttempt, type PuzzleSelectionMode } from '../api'
+import { fetchRandomPuzzle, recordAttempt } from '../api'
 import { puzzles as fallbackPuzzles } from '../puzzles'
 import { session } from '../session'
-
-const MODES: { value: PuzzleSelectionMode; label: string }[] = [
-  { value: 'rating', label: 'Rating' },
-  { value: 'weakness', label: 'Weak Spots' },
-  { value: 'random', label: 'Random' },
-]
+import { puzzleMode } from '../puzzleMode'
 
 const currentPuzzle = ref<Puzzle | null>(null)
-const mode = ref<PuzzleSelectionMode>('rating')
 const solved = ref(false)
 const gaveUp = ref(false)
 const solvedCount = ref(0)
@@ -25,17 +19,15 @@ let fallbackIndex = 0
 let solveStartedAt = 0
 let attemptRecorded = false
 
-function selectMode(newMode: PuzzleSelectionMode) {
-  if (newMode === mode.value) return
-  mode.value = newMode
-  nextPuzzle()
-}
+// The mode buttons themselves live in the top toolbar (App.vue) now, not
+// here — this just reacts when that shared state changes.
+watch(puzzleMode, nextPuzzle)
 
 async function nextPuzzle() {
   solved.value = false
   gaveUp.value = false
   try {
-    currentPuzzle.value = await fetchRandomPuzzle(session.value?.token, mode.value)
+    currentPuzzle.value = await fetchRandomPuzzle(session.value?.token, puzzleMode.value)
     usingFallback.value = false
   } catch {
     // Backend not running/unreachable — fall back to the hand-verified seed puzzles.
@@ -77,16 +69,6 @@ onMounted(nextPuzzle)
 
 <template>
   <p class="counter">{{ solvedCount }} puzzles solved this session</p>
-  <div v-if="session" class="mode-select">
-    <button
-      v-for="m in MODES"
-      :key="m.value"
-      :class="{ active: mode === m.value }"
-      @click="selectMode(m.value)"
-    >
-      {{ m.label }}
-    </button>
-  </div>
   <p v-if="usingFallback" class="counter">Backend unreachable — showing an offline seed puzzle</p>
   <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" @gave-up="handleGaveUp" />
   <button v-if="solved || gaveUp" class="next" @click="nextPuzzle">Next puzzle →</button>
@@ -94,20 +76,6 @@ onMounted(nextPuzzle)
 
 <style scoped>
 .counter { color: #cfc6b3; font-size: 0.9rem; margin: 0 0 0.5rem; }
-.mode-select { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; }
-.mode-select button {
-  background: transparent;
-  color: #cfc6b3;
-  border: 1px solid #47423a;
-  border-radius: 4px;
-  padding: 0.3rem 0.7rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.mode-select button.active {
-  color: #ede6d6;
-  border-color: #b8985a;
-}
 .next {
   margin-top: 0.75rem;
   background: transparent;

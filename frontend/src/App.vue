@@ -1,25 +1,43 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AuthPanel from './components/AuthPanel.vue'
 import { session, setSession, logout } from './session'
+import { MODES, puzzleMode } from './puzzleMode'
+
+const route = useRoute()
 </script>
 
 <template>
+  <header class="toolbar">
+    <div class="toolbar-nav">
+      <span class="brand">Blindspot</span>
+      <nav v-if="session" class="nav">
+        <RouterLink to="/">Puzzles</RouterLink>
+        <RouterLink to="/stats">Stats</RouterLink>
+        <RouterLink to="/friends">Friends</RouterLink>
+      </nav>
+      <div v-if="session && route.path === '/'" class="mode-select">
+        <button
+          v-for="m in MODES"
+          :key="m.value"
+          :class="{ active: puzzleMode === m.value }"
+          @click="puzzleMode = m.value"
+        >
+          {{ m.label }}
+        </button>
+      </div>
+    </div>
+
+    <div class="toolbar-account">
+      <AuthPanel v-if="!session" @authenticated="setSession" />
+      <p v-else class="account">
+        {{ session.user.email }}
+        <button class="link" @click="logout">Log out</button>
+      </p>
+    </div>
+  </header>
+
   <main>
-    <h1>Blindspot</h1>
-
-    <nav v-if="session" class="nav">
-      <RouterLink to="/">Puzzles</RouterLink>
-      <RouterLink to="/stats">Stats</RouterLink>
-      <RouterLink to="/friends">Friends</RouterLink>
-    </nav>
-
-    <AuthPanel v-if="!session" @authenticated="setSession" />
-    <p v-else class="counter">
-      Signed in as {{ session.user.email }}
-      <button class="link" @click="logout">Log out</button>
-    </p>
-
     <RouterView />
   </main>
 </template>
@@ -31,12 +49,33 @@ body {
   background: #1c1a17;
   color: #ede6d6;
   font-family: system-ui, sans-serif;
-  display: flex;
-  justify-content: center;
 }
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid #3a352c;
+}
+.toolbar-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.25rem;
+}
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-size: 1.1rem;
+}
+.toolbar-account { display: flex; align-items: center; }
+
 main { padding: 2rem 1rem; text-align: center; display: flex; flex-direction: column; align-items: center; }
-h1 { font-weight: 600; letter-spacing: 0.02em; }
-.nav { display: flex; gap: 1rem; margin-bottom: 0.75rem; }
+
+.nav { display: flex; gap: 1rem; }
 .nav a {
   color: #cfc6b3;
   text-decoration: none;
@@ -48,8 +87,24 @@ h1 { font-weight: 600; letter-spacing: 0.02em; }
   color: #ede6d6;
   border-bottom-color: #b8985a;
 }
-.counter { color: #cfc6b3; font-size: 0.9rem; margin: 0 0 0.5rem; }
-.counter .link {
+
+.mode-select { display: flex; gap: 0.4rem; }
+.mode-select button {
+  background: transparent;
+  color: #cfc6b3;
+  border: 1px solid #47423a;
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.mode-select button.active {
+  color: #ede6d6;
+  border-color: #b8985a;
+}
+
+.account { color: #cfc6b3; font-size: 0.9rem; margin: 0; white-space: nowrap; }
+.account .link {
   background: none;
   border: none;
   color: #b8985a;
