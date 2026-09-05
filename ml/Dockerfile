@@ -1,9 +1,12 @@
 FROM python:3.12-slim
 
 # Stockfish itself, for "My Games" blunder detection — not a Python package,
-# just a compiled engine binary this puts on $PATH.
+# just a compiled engine binary. Debian's package installs it to /usr/games,
+# which isn't on $PATH for a non-login shell — symlink it onto a directory
+# that is, so config.py's "stockfish" default (bare command, no path) works.
 RUN apt-get update && apt-get install -y --no-install-recommends stockfish \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/games/stockfish /usr/local/bin/stockfish
 
 RUN pip install --no-cache-dir uv
 
