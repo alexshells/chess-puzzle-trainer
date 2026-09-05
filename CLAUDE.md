@@ -241,7 +241,17 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     puzzle (`solution[0]` = the opponent's actual move that led into the
     position, `solution[1]` = Stockfish's suggested correct move,
     `solution[2+]` = its continuing principal variation) — `ChessBoard.vue`
-    needed zero changes to play these
+    needed zero changes to play these. Capped at `max_solver_moves` (3)
+    solver-side moves — `2*max_solver_moves-1` plies of `solving_pv` — a
+    deliberate design choice, not whatever length Stockfish's PV happens to
+    return; always ends on a solver move, never an auto-played reply.
+    `ChessBoard.vue`'s `handleMove()` used to assume a solver move always
+    followed an auto-played reply, so whether a puzzle actually terminated
+    correctly was an unintentional accident of whether the PV happened to
+    have an odd (works) or even (silently flagged the next move as wrong,
+    including the objectively correct one) number of moves — fixed to check
+    after the auto-play whether the solution array has anything left, not
+    just after a solver move
   - A personal puzzle's `rating` is `puzzle_rating_model`'s prediction when
     a trained model is available, falling back to the player's own
     chess.com rating in that specific game otherwise (see Phase 2.5 below)
