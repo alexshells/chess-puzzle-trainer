@@ -508,12 +508,31 @@ gitignored).
   verification (in-app `<RouterLink>` nav had always masked this).
 - **ml/'s own Alembic migrations are a separate deploy step from
   `railway up`**, easy to forget: deploying new code that references a new
-  table (`game_import_progress`, `personal_puzzle_candidate`) does not run
-  `alembic upgrade head` against prod — that's a separate
+  table or column (`game_import_progress`, `personal_puzzle_candidate`,
+  `puzzle_quality_training_example`) does not run `alembic upgrade head`
+  against prod — that's a separate
   `railway ssh --service ml -- uv run alembic upgrade head`, same as
   backend's `doctrine:migrations:migrate` is a separate step from its own
-  deploy. Missed once during "My Games" launch (500s with "table doesn't
-  exist" until run manually).
+  deploy. Missed during the original "My Games" launch (500s with "table
+  doesn't exist" until run manually) — and missed *again* wiring up the
+  puzzle-quality/rating models, since `forced`/`refutation_gap_cp`/
+  `setup_swing_cp` had only ever been migrated locally. Two misses on the
+  same gotcha is a sign this needs a real fix (a deploy script or CI step
+  that runs both migration commands automatically), not just a note here.
+- **A Dockerfile only ships what it explicitly `COPY`s.** `ml/models/`
+  (the committed, non-gitignored trained model artifacts —
+  `puzzle_rating_model.py`/`puzzle_quality_model.py`'s default load path)
+  was committed to the repo but `ml/Dockerfile` never had a
+  `COPY models ./models` line, so `try_load()`'s `path.exists()` check was
+  always false in production — every "My Games" import silently fell back
+  to the player's-own-rating heuristic with no error at all, since that
+  fallback is the intended graceful-degradation behavior for a genuinely
+  missing model. Caught by checking actual production data (new personal
+  puzzles were rated 3400+, above `predict()`'s clamp ceiling of 3000,
+  which only the fallback path can produce) rather than any log or
+  exception — a reminder that graceful degradation can also silently mask
+  a real bug if nothing ever checks whether the primary path is actually
+  being exercised.
 - **Debian's `stockfish` apt package installs to `/usr/games/stockfish`**,
   which isn't on `$PATH` for the non-login shell a `CMD`/`RUN` runs under —
   `config.py`'s `stockfish_path` default of a bare `"stockfish"` command
