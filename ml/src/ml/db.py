@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -141,10 +142,49 @@ class PersonalPuzzleCandidate(Base):
     # CLAUDE.md's Phase 2.5 note) — read via db.py's external_metadata, same
     # as puzzle/puzzle_attempt already are.
     external_id = Column(String(255), nullable=False, unique=True)
-    # Puzzle-quality signals from game_import.py's multipv analysis, not
-    # (yet) used to filter candidates. Nullable because candidates found
-    # before this column existed have no value to backfill.
+    # Puzzle-quality signals from puzzle_quality.py's analysis, not (yet)
+    # used to filter candidates. Nullable because candidates found before
+    # these columns existed have no value to backfill.
     forced = Column(Boolean, nullable=True)
     refutation_gap_cp = Column(Integer, nullable=True)
+    setup_swing_cp = Column(Integer, nullable=True)
     delivered = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False)
+
+
+class PuzzleQualityTrainingExample(Base):
+    """
+    A sampled, already-published Lichess puzzle scored with the same
+    puzzle_quality.py features as our own PersonalPuzzleCandidate rows, paired
+    with Lichess's own crowd-sourced quality signal (Popularity/NbPlays from
+    the raw CSV — see build_training_dataset.py) as the label. Bootstraps a
+    puzzle-quality model off a much larger, already-collected vote history
+    than our own thumbs up/down feedback could produce for a long while;
+    `source`/`external_id` leave room for a later batch of examples derived
+    from our own puzzle_feedback votes to live in this same table.
+    """
+
+    __tablename__ = "puzzle_quality_training_example"
+    __table_args__ = (UniqueConstraint("source", "external_id", name="uq_quality_example_source_external_id"),)
+
+    id = Column(Integer, primary_key=True)
+    # "lichess" for now; a future "personal" batch (sourced from our own
+    # puzzle_feedback table) would use this same table with a different value.
+    source = Column(String(16), nullable=False)
+    # The Lichess PuzzleId for a "lichess"-sourced row — this table's own
+    # dedup key (alongside `source`), not a join key into our `puzzle` table
+    # (most sampled rows were never imported into it).
+    external_id = Column(String(255), nullable=False)
+    fen = Column(String(100), nullable=False)
+    setup_move = Column(String(8), nullable=False)
+    rating = Column(Integer, nullable=False)
+    setup_swing_cp = Column(Integer, nullable=False)
+    forced = Column(Boolean, nullable=False)
+    refutation_gap_cp = Column(Integer, nullable=True)
+    # Raw label source: Lichess's aggregated (+1/-1) vote score, roughly
+    # -100..100, and the play count behind it — kept raw rather than
+    # pre-binarized so the training script can choose its own label
+    # threshold (or use nb_plays as a confidence weight) without a re-scan.
+    popularity = Column(Integer, nullable=False)
+    nb_plays = Column(Integer, nullable=False)
     created_at = Column(DateTime, nullable=False)

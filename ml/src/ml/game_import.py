@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, SessionLocal
+from ml.puzzle_quality import analyse_puzzle_quality
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,17 @@ class BlunderCandidate:
     solution: list[str]
     external_id: str
     rating: int
-    # Puzzle-quality signal, not (yet) used to filter candidates — see
-    # config.py's forced_gap_cp. `forced=True` means the engine's top move at
-    # the puzzle position clearly beats the next-best alternative (or there
-    # simply wasn't a second legal reply); `refutation_gap_cp` is the raw
-    # margin, `None` when there was only one legal reply to compare against.
+    # Puzzle-quality signals from puzzle_quality.py, not (yet) used to filter
+    # candidates — see config.py's forced_gap_cp. `forced=True` means the
+    # engine's top move at the puzzle position clearly beats the next-best
+    # alternative (or there simply wasn't a second legal reply);
+    # `refutation_gap_cp` is the raw margin, `None` when there was only one
+    # legal reply to compare against. `setup_swing_cp` is how much the
+    # position dropped, from the blundering side's own POV, purely from
+    # playing the setup move (last_move) — independent of what target did next.
     forced: bool
     refutation_gap_cp: int | None
+    setup_swing_cp: int
 
 
 def fetch_archive_urls(username: str) -> list[str]:
@@ -117,43 +122,34 @@ def find_blunders(
         move = next_node.move
 
         if board.turn == target_color and last_move is not None and fen_before_last_move is not None:
-            # multipv=2 so we can tell a genuinely forced refutation (the top
-            # move clearly beats the runner-up) from a position where several
-            # moves win about equally well — see BlunderCandidate.forced.
-            info_lines = engine.analyse(board, limit, multipv=2)
-            if isinstance(info_lines, dict):
-                info_lines = [info_lines]
-            best = info_lines[0]
-            eval_before = best["score"].pov(target_color).score(mate_score=100_000)
-            pv = best.get("pv", [])
+            analysis = analyse_puzzle_quality(
+                fen_before_last_move, last_move.uci(), engine, depth=depth, forced_gap_cp=forced_gap_cp
+            )
 
-            if eval_before is not None and eval_before > -decided_position_cp and pv:
+            if (
+                analysis is not None
+                and analysis.puzzle_position_eval_cp > -decided_position_cp
+                and analysis.solving_pv
+            ):
                 board_after = board.copy()
                 board_after.push(move)
                 info_after = engine.analyse(board_after, limit)
                 eval_after = info_after["score"].pov(target_color).score(mate_score=100_000)
 
-                if eval_after is not None and eval_before - eval_after >= blunder_threshold_cp:
-                    second_eval = (
-                        info_lines[1]["score"].pov(target_color).score(mate_score=100_000)
-                        if len(info_lines) > 1
-                        else None
-                    )
-                    refutation_gap_cp = None if second_eval is None else eval_before - second_eval
-                    # No second legal reply to compare against is trivially
-                    # forced; otherwise it's forced only if the gap clears
-                    # the threshold, not just "the top move is listed first".
-                    forced = refutation_gap_cp is None or refutation_gap_cp >= forced_gap_cp
-
-                    solution = [last_move.uci()] + [m.uci() for m in pv[:4]]
+                if (
+                    eval_after is not None
+                    and analysis.puzzle_position_eval_cp - eval_after >= blunder_threshold_cp
+                ):
+                    solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[:4]]
                     candidates.append(
                         BlunderCandidate(
                             fen=fen_before_last_move,
                             solution=solution,
                             external_id=f"chesscom:{game_id}:{ply}",
                             rating=player_rating,
-                            forced=forced,
-                            refutation_gap_cp=refutation_gap_cp,
+                            forced=analysis.forced,
+                            refutation_gap_cp=analysis.refutation_gap_cp,
+                            setup_swing_cp=analysis.setup_swing_cp,
                         )
                     )
 
@@ -312,6 +308,7 @@ def _process_one_game(
                 external_id=candidate.external_id,
                 forced=candidate.forced,
                 refutation_gap_cp=candidate.refutation_gap_cp,
+                setup_swing_cp=candidate.setup_swing_cp,
                 delivered=False,
                 created_at=datetime.now(timezone.utc),
             )

@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .env
+
+# Downloaded/generated — build_training_dataset.py fetches the CSV itself;
+# trained model artifacts are regenerable from the DB, not source.
+var/
+*.csv.zst
+*.joblib

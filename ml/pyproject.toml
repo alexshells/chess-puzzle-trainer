@@ -11,10 +11,13 @@ dependencies = [
     "chess>=1.11.2",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
+    "joblib>=1.6.0",
     "pydantic-settings>=2.15.0",
     "pymysql>=1.2.0",
+    "scikit-learn>=1.9.0",
     "sqlalchemy>=2.0.52",
     "uvicorn[standard]>=0.52.4",
+    "zstandard>=0.25.0",
 ]
 
 [build-system]

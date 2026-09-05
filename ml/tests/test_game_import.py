@@ -39,9 +39,11 @@ class FakeScore:
 class FakeEngine:
     """
     Returns one scripted response per call, in order. A response is either a
-    plain (eval_cp, pv) tuple — for a normal analyse() call, used for the
-    "after the move" evaluation — or a list of up to two such tuples, best
-    line first, for a multipv=2 "before the move" call.
+    plain (eval_cp, pv) tuple — for a normal analyse() call (the "before the
+    setup move" eval, and the "after target's actual move" eval) — or a list
+    of up to two such tuples, best line first, for a multipv=2 "at the
+    puzzle position" call. Each target-turn iteration makes up to three
+    calls in that order: pre-setup, puzzle-position (multipv), after.
     """
 
     def __init__(self, responses: list):
@@ -61,14 +63,16 @@ class FakeEngine:
 
 def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     # White's move 2 (Nf3): small drop, below threshold — not a blunder.
-    # White's move 3 (Bxc6): eval drops from +15 to -300, a 315cp swing, and
-    # the runner-up move (-90) trails the best move (15) by 105cp — over the
-    # 100cp forced_gap_cp, so this counts as a forced/unique refutation.
+    # White's move 3 (Bxc6): puzzle-position eval drops from +15 to -300, a
+    # 315cp swing, and the runner-up move (-90) trails the best move (15) by
+    # 105cp — over the 100cp forced_gap_cp, so this counts as forced.
     engine = FakeEngine(
         [
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # before Nf3 (multipv=2)
+            (999, [_PV_MOVE]),  # pre-setup eval before Nf3 (unused by assertions)
+            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3 (multipv=2)
             (10, [_PV_MOVE]),  # after Nf3
-            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # before Bxc6 (multipv=2)
+            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
+            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # puzzle position before Bxc6 (multipv=2)
             (-300, [_PV_MOVE]),  # after Bxc6
         ]
     )
@@ -95,6 +99,7 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     assert candidate.solution[1] == "e2e4"
     assert candidate.forced is True
     assert candidate.refutation_gap_cp == 105
+    assert candidate.setup_swing_cp == 200 - 15
 
 
 def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
@@ -103,9 +108,11 @@ def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
     # it isn't a "there's exactly one right answer" puzzle.
     engine = FakeEngine(
         [
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # before Nf3
+            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
+            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
             (10, [_PV_MOVE]),  # after Nf3
-            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # before Bxc6
+            (100, [_PV_MOVE]),  # pre-setup eval before Bxc6
+            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # puzzle position before Bxc6
             (-300, [_PV_MOVE]),  # after Bxc6
         ]
     )
@@ -125,6 +132,7 @@ def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
     assert len(candidates) == 1
     assert candidates[0].forced is False
     assert candidates[0].refutation_gap_cp == 15
+    assert candidates[0].setup_swing_cp == 100 - 15
 
 
 def test_marks_forced_when_there_is_no_second_legal_reply():
@@ -132,9 +140,11 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
     # trivially forced, with no gap to report.
     engine = FakeEngine(
         [
-            [(20, [_PV_MOVE])],  # before Nf3 — single line
+            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
+            [(20, [_PV_MOVE])],  # puzzle position before Nf3 — single line
             (10, [_PV_MOVE]),  # after Nf3
-            [(15, [_PV_MOVE])],  # before Bxc6 — single line
+            (50, [_PV_MOVE]),  # pre-setup eval before Bxc6
+            [(15, [_PV_MOVE])],  # puzzle position before Bxc6 — single line
             (-300, [_PV_MOVE]),  # after Bxc6
         ]
     )
@@ -154,18 +164,23 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
     assert len(candidates) == 1
     assert candidates[0].forced is True
     assert candidates[0].refutation_gap_cp is None
+    assert candidates[0].setup_swing_cp == 50 - 15
 
 
 def test_skips_blunders_in_an_already_lost_position():
     # Already down 700cp before the move — a further mistake there isn't an
     # interesting puzzle, so no candidate should be produced even though the
-    # eval still drops by more than the threshold.
+    # eval still drops by more than the threshold. The guard fails right
+    # after the puzzle-position multipv call, so no "after" call happens for
+    # that iteration (only 5 of the 6 scripted responses get consumed).
     engine = FakeEngine(
         [
-            [(0, [_PV_MOVE]), (-5, [_PV_MOVE])],
-            (0, [_PV_MOVE]),
-            [(-700, [_PV_MOVE]), (-750, [_PV_MOVE])],
-            (-1000, [_PV_MOVE]),
+            (10, [_PV_MOVE]),  # pre-setup eval, iteration 1
+            [(0, [_PV_MOVE]), (-5, [_PV_MOVE])],  # puzzle position, iteration 1
+            (0, [_PV_MOVE]),  # after, iteration 1 — no swing, no candidate
+            (-650, [_PV_MOVE]),  # pre-setup eval, iteration 2 (unused by assertions)
+            [(-700, [_PV_MOVE]), (-750, [_PV_MOVE])],  # puzzle position, iteration 2 — already lost
+            (-1000, [_PV_MOVE]),  # never consumed — guard fails before this would be called
         ]
     )
 

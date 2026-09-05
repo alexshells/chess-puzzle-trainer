@@ -253,32 +253,69 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     `winget install Stockfish.Stockfish` and then point `STOCKFISH_PATH` in
     `ml/.env` at the installed `.exe`, since it won't land on `PATH`
     automatically the way the Linux container's apt package does
-- Phase 2.5 (built): **puzzle-quality feedback**. A thumbs up/down on any
-  solved/given-up "My Games" puzzle (`MyGamesView.vue`, backend's
-  `PuzzleFeedback` entity + `PuzzleFeedbackController`,
-  `POST /api/puzzles/{id}/feedback`) — the label a future puzzle-quality
-  model will train against, since `find_blunders`' fixed eval-swing
-  threshold is a heuristic, not a judgment of whether a position is
-  actually instructive. One row per `(user, puzzle)`; voting again
-  overwrites rather than accumulating ("is this any good", not a tally).
-  Scoped to puzzles the voting user owns — a 403 otherwise, since the
-  question only makes sense for a user's own generated puzzles, not the
-  already-curated shared Lichess pool. `ml/`'s `db.py` registers
-  `puzzle_feedback` alongside `puzzle`/`puzzle_attempt` in
-  `external_metadata` (read-only, same ownership boundary as those) so a
-  future training script can join it to `personal_puzzle_candidate` by
-  `external_id` — but **nothing reads it yet**; the model itself (feature
-  set beyond what's below, classifier vs. something larger) is a
-  deliberately separate, not-yet-made decision.
-  - `find_blunders` also now runs its "before the move" analysis at
-    `multipv=2` and records `forced` (bool) + `refutation_gap_cp` on each
-    `PersonalPuzzleCandidate` — whether the engine's top move at the puzzle
-    position clearly beats the runner-up (or there was only one legal
-    reply, trivially forced) versus several moves winning about equally
-    well. `forced_gap_cp` (default 100) is the cp margin that counts as
-    "clearly beats". Purely descriptive for now, same as the feedback
-    table — not used to filter or rank candidates yet, just captured so
-    it's available as a feature once there's a model to feed it to.
+- Phase 2.5 (built): **puzzle-quality model**. `find_blunders`' fixed
+  eval-swing threshold decides what's a *candidate* puzzle, not whether it's
+  actually a *good* one — this phase is about scoring that separately.
+  - **Feedback capture**: a thumbs up/down on any solved/given-up "My
+    Games" puzzle (`MyGamesView.vue`, backend's `PuzzleFeedback` entity +
+    `PuzzleFeedbackController`, `POST /api/puzzles/{id}/feedback`). One row
+    per `(user, puzzle)`; voting again overwrites rather than accumulating
+    ("is this any good", not a tally). Scoped to puzzles the voting user
+    owns — a 403 otherwise, since the question only makes sense for a
+    user's own generated puzzles, not the already-curated shared Lichess
+    pool. `ml/`'s `db.py` registers `puzzle_feedback` alongside
+    `puzzle`/`puzzle_attempt` in `external_metadata` (read-only, same
+    ownership boundary as those) so a future training batch can join it to
+    `personal_puzzle_candidate` by `external_id` — **not done yet**; our
+    own vote volume is nowhere near large enough on its own, see below.
+  - **Shared feature computation** (`ml/src/ml/puzzle_quality.py`,
+    `analyse_puzzle_quality()`): given just a pre-blunder FEN and the
+    blundering move — the one thing every candidate source (our own games,
+    or an already-published Lichess puzzle) has in common — computes
+    `setup_swing_cp` (how much the position dropped, from the *blundering*
+    side's own POV, purely from that one move) and `forced`/
+    `refutation_gap_cp` (multipv=2 at the resulting position: does the
+    solving side have one clearly-best move, or several roughly-equal
+    ones). `find_blunders` calls this directly now (one extra Stockfish
+    call per checked position, for the pre-setup eval) and records all
+    three on `PersonalPuzzleCandidate`, still purely descriptive — not
+    used to filter or rank candidates yet.
+  - **Bootstrap training data off Lichess's own puzzles**
+    (`ml/src/ml/build_training_dataset.py`): our own `puzzle_feedback` vote
+    count will be small for a long time, but Lichess's `Popularity` column
+    (aggregated +1/-1 votes from *their* users, in the raw CSV export —
+    database.lichess.org/#puzzles) is the exact same kind of signal at a
+    scale we can't otherwise reach. The importer never stored
+    Popularity/NbPlays (see `ImportPuzzlesCommand`), so this script
+    downloads the full CSV separately into `ml/var/` (gitignored,
+    ~290MB, streamed through `zstandard` — never decompressed to disk),
+    reservoir-samples rows (Algorithm R — a uniform sample from a stream of
+    unknown length in one pass, so it doesn't favor whatever's early in the
+    file), scores each with `analyse_puzzle_quality`, and stores the
+    result in a new ml/-owned table, `PuzzleQualityTrainingExample`
+    (`source`/`external_id` so a later batch of examples sourced from our
+    own `puzzle_feedback` votes can live in the same table).
+  - **Training** (`ml/src/ml/train_puzzle_quality_model.py`): logistic
+    regression, not something bigger — at a few thousand examples from one
+    bootstrap source, a small linear model is less likely to overfit than
+    gradient-boosted trees would be, and its coefficients are directly
+    readable. **Labels on a median split of `Popularity` within the
+    sample, not a fixed "> 0" cutoff** — measured on a real 5.6k-row
+    sample, 99.6% of already-published Lichess puzzles have positive
+    Popularity (they're pre-curated, so very few end up net-downvoted),
+    so an absolute-zero threshold produces a label that's almost entirely
+    one class, not a real classification problem. "More/less popular than
+    its peers in this sample" is the question this data can actually
+    answer. First real run (5,618 examples): AUC 0.570 — modest, but a
+    genuinely balanced problem and above chance, and `forced`'s
+    coefficient came out positive (a clearly-forced refutation correlates
+    with higher relative popularity) — a real, if small, validation of the
+    forced/unique feature above. **Inference isn't wired into
+    `game_import.py` yet** — the trained artifact
+    (`ml/var/puzzle_quality_model.joblib`, gitignored, regenerable from the
+    DB) exists but nothing scores live candidates with it; that, plus
+    eventually blending in our own `puzzle_feedback` votes as they
+    accumulate, is the next step whenever this gets picked back up.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
@@ -428,6 +465,10 @@ cd ml
 uv run uvicorn ml.main:app --port 8001   # backend's ML_SERVICE_URL points here
 uv run alembic upgrade head               # apply ml/'s own migrations
 uv run pytest
+
+# Puzzle-quality model (Phase 2.5, see above) — not part of normal dev setup
+uv run python -m ml.build_training_dataset --sample-size 5000   # downloads the Lichess CSV on first run
+uv run python -m ml.train_puzzle_quality_model
 ```
 
 Both `frontend/` and `backend/` have their own `public/` — a common mistake
