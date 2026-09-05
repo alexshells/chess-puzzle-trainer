@@ -6,6 +6,7 @@ use App\Entity\Puzzle;
 use App\Entity\PuzzleFeedback;
 use App\Entity\User;
 use App\Repository\PuzzleFeedbackRepository;
+use App\Service\MlDeliveryClient;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -28,6 +29,7 @@ class PuzzleFeedbackController
         private readonly Security $security,
         private readonly EntityManagerInterface $entityManager,
         private readonly PuzzleFeedbackRepository $puzzleFeedbackRepository,
+        private readonly MlDeliveryClient $mlDeliveryClient,
     ) {
     }
 
@@ -57,6 +59,10 @@ class PuzzleFeedbackController
 
         $this->entityManager->persist($feedback);
         $this->entityManager->flush();
+
+        // Best-effort — MlDeliveryClient swallows its own failures, since
+        // ml/ being unreachable must never break feedback submission.
+        $this->mlDeliveryClient->applyReward($user, $puzzle->getId(), $stars);
 
         return new JsonResponse(['stars' => $feedback->getStars()]);
     }
