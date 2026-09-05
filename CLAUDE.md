@@ -399,12 +399,74 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     silently fall back to the heuristic in production. The quality
     classifier's inference is *not* wired in anywhere yet — nothing calls
     `puzzle_quality_model.predict()` outside its own tests.
-  - Open next steps: categorizing puzzles (the third leg of this — see
-    design doc discussion), richer features (mate distance, material
-    swing, game phase), wiring in the quality classifier too (e.g. to
-    filter or rank candidates), and eventually blending our own
-    `puzzle_feedback` votes into both models' training data as they
-    accumulate.
+  - **The quality classifier is wired in too (built)** — `find_blunders`
+    takes an optional `quality_model` the same way it takes `rating_model`;
+    when given, a candidate's `quality_score` is `puzzle_quality_model`'s
+    prediction (reusing the just-computed `rating` as that model's one
+    extra feature), stored on `PersonalPuzzleCandidate` and relayed onto
+    backend's `Puzzle` the same way `rating`/`forced`/`setup_swing_cp`
+    already are. Nothing scored it before now; the delivery bandit below is
+    the first consumer.
+- Phase 2.6 (built): **delivery bandit** — contextual Thompson Sampling
+  decides which "My Games" puzzle to serve next, instead of the original
+  uniform-random pick (`findOneRandomForOwner`, now only the fallback for
+  when ml/ is unreachable or has no history for this user yet).
+  `ml/src/ml/delivery_bandit.py` is the pure math (kept deliberately
+  separate from any DB/HTTP concern, same split as `puzzle_quality.py`);
+  `ml/src/ml/delivery_service.py` is the impure wiring that reads a user's
+  pool and rating, runs it, and persists the result.
+  - **Arms are puzzle-selection *policies*, not individual puzzles** — a
+    personal puzzle is served to one user essentially once, so there's no
+    repeated-pull history to learn at the level of a single puzzle the way
+    classic bandit algorithms assume. `DeliveryArm` has five: `best_quality`,
+    `closest_rating`, `forced_clean`, `biggest_blunder`, and
+    `random_baseline` (a deliberate "do nothing clever" control — without
+    it there'd be no way to tell whether the other four are actually
+    earning their keep). Each pull is genuinely one of these five policies,
+    pulled across every delivery for every user, which is what actually
+    lets Thompson Sampling converge.
+  - **Contextual via Bayesian linear regression, not a plain per-arm
+    average** — each arm's belief about `reward = w · context + noise` is a
+    multivariate Normal over `w`, fully described by two sufficient
+    statistics (a precision matrix and a weighted-reward-sum vector) with a
+    closed-form conjugate update, no numerical fitting. `context` is
+    `[intercept, scaled_rating]` today (`build_context()`); the same
+    mechanism extends to richer context (e.g. a weak-category indicator,
+    once categorization exists) by growing the vector, not by changing the
+    algorithm.
+  - **Reward is the raw 1-5 star rating** (`PuzzleFeedback.stars`) —
+    deliberately *not* blended with solve success/failure, which measures a
+    different thing (a puzzle can be excellent and still get solved, or
+    missed and still rated highly as "hard but fair"). Gaussian Thompson
+    Sampling (not the more common Beta-Bernoulli form) specifically because
+    the reward isn't binary.
+  - **State is plain, named, numpy-loadable arrays on purpose, not an
+    opaque blob** — `bandit_arm_state` stores each arm's `precision_matrix`
+    and `weighted_reward_sum` as JSON-encoded plain lists; `mu =
+    np.linalg.solve(A, b)` is the entire "what does this arm currently
+    believe" computation, three lines in any later analysis script.
+    `bandit_pull` is the append-only event log everything is derived
+    from — every delivery, its arm, its context, and its reward once
+    rated — so `bandit_arm_state` is always safe to recompute from scratch
+    if the model ever changes (same recompute-from-log escape hatch as
+    backend's `app:recompute-category-ratings`).
+  - Flow: `GameImportController::randomPersonalPuzzle()` calls ml/'s
+    `GET /users/{id}/delivery/choose-puzzle` (via the new `MlDeliveryClient`,
+    same graceful-degradation pattern as the other two Ml*Client services)
+    instead of picking randomly; `PuzzleFeedbackController::submit()`
+    forwards each star rating to ml/'s `POST /users/{id}/delivery/reward`
+    right after saving it, best-effort. Verified locally end-to-end through
+    the full stack: a real fetch-puzzle-then-rate-it round trip through
+    both backend and ml/ produced exactly the hand-computed posterior
+    update (prior mean 0, one 5-star observation at prior precision 1 →
+    posterior mean 2.5 — Bayesian shrinkage halfway to the observation, as
+    expected).
+  - Open next steps: categorizing puzzles (the third leg of the original
+    design doc discussion) and richer context/features (mate distance,
+    material swing, game phase, weak-category indicator) for both the
+    classifiers and the bandit alike; blending our own `puzzle_feedback`
+    into `puzzle_quality_model`'s training data as it accumulates, since
+    right now that model only ever trains on Lichess's `Popularity`.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
