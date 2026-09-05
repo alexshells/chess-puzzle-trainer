@@ -58,6 +58,19 @@ puzzle_attempt_table = Table(
     Column("puzzle_id", Integer, ForeignKey("puzzle.id"), nullable=False),
 )
 
+# Thumbs up/down on "My Games" puzzles (backend's PuzzleFeedback entity) — the
+# label a future puzzle-quality model trains against, joined to this table's
+# PersonalPuzzleCandidate rows via puzzle.external_id (see that model's
+# docstring). Doctrine-owned like the tables above; ml/ only ever reads it.
+puzzle_feedback_table = Table(
+    "puzzle_feedback",
+    external_metadata,
+    Column("id", Integer, primary_key=True),
+    Column("thumbs_up", Boolean, nullable=False),
+    Column("user_id", Integer, ForeignKey("user.id"), nullable=False),
+    Column("puzzle_id", Integer, ForeignKey("puzzle.id"), nullable=False),
+)
+
 
 class Base(DeclarativeBase):
     pass
@@ -122,7 +135,16 @@ class PersonalPuzzleCandidate(Base):
     # JSON-encoded array of UCI moves, same shape/convention as Puzzle.solution.
     solution = Column(Text, nullable=False)
     rating = Column(Integer, nullable=False)
-    # e.g. "chesscom:{game_id}:{ply}" — backend's dedup key.
+    # e.g. "chesscom:{game_id}:{ply}" — backend's dedup key. Also the join key
+    # a future puzzle-quality model uses to line these features up with the
+    # thumbs up/down label sitting in backend's puzzle_feedback table (see
+    # CLAUDE.md's Phase 2.5 note) — read via db.py's external_metadata, same
+    # as puzzle/puzzle_attempt already are.
     external_id = Column(String(255), nullable=False, unique=True)
+    # Puzzle-quality signals from game_import.py's multipv analysis, not
+    # (yet) used to filter candidates. Nullable because candidates found
+    # before this column existed have no value to backfill.
+    forced = Column(Boolean, nullable=True)
+    refutation_gap_cp = Column(Integer, nullable=True)
     delivered = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False)

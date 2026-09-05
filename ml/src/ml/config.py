@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # Skip blunders piled onto an already-decided position — not an
     # interesting puzzle if one side was already winning/losing by this much.
     decided_position_cp: int = 600
+    # How much the best move at the puzzle position must beat the second-best
+    # by (per multipv=2 analysis) to count as a "forced" — i.e. genuinely
+    # unique — refutation, not just one of several ways to win. Purely
+    # informational for now (stored on PersonalPuzzleCandidate, not used to
+    # filter candidates) — see CLAUDE.md's Phase 2.5 note on puzzle-quality
+    # feedback for why this isn't wired into a hard threshold yet.
+    forced_gap_cp: int = 100
 
     @property
     def resolved_database_url(self) -> str:

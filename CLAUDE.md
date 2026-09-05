@@ -263,12 +263,22 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   overwrites rather than accumulating ("is this any good", not a tally).
   Scoped to puzzles the voting user owns — a 403 otherwise, since the
   question only makes sense for a user's own generated puzzles, not the
-  already-curated shared Lichess pool. **`ml/` doesn't read this table
-  yet** — the model that consumes it (feature set, and whether it's a
-  small classifier over hand-engineered Stockfish signals vs. something
-  larger) is a deliberately separate, not-yet-made decision; wiring this
-  up prematurely around an unpicked model would've meant guessing at a
-  feature schema before there was any real data to justify one.
+  already-curated shared Lichess pool. `ml/`'s `db.py` registers
+  `puzzle_feedback` alongside `puzzle`/`puzzle_attempt` in
+  `external_metadata` (read-only, same ownership boundary as those) so a
+  future training script can join it to `personal_puzzle_candidate` by
+  `external_id` — but **nothing reads it yet**; the model itself (feature
+  set beyond what's below, classifier vs. something larger) is a
+  deliberately separate, not-yet-made decision.
+  - `find_blunders` also now runs its "before the move" analysis at
+    `multipv=2` and records `forced` (bool) + `refutation_gap_cp` on each
+    `PersonalPuzzleCandidate` — whether the engine's top move at the puzzle
+    position clearly beats the runner-up (or there was only one legal
+    reply, trivially forced) versus several moves winning about equally
+    well. `forced_gap_cp` (default 100) is the cp margin that counts as
+    "clearly beats". Purely descriptive for now, same as the feedback
+    table — not used to filter or rank candidates yet, just captured so
+    it's available as a feature once there's a model to feed it to.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness

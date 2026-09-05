@@ -48,6 +48,13 @@ class BlunderCandidate:
     solution: list[str]
     external_id: str
     rating: int
+    # Puzzle-quality signal, not (yet) used to filter candidates — see
+    # config.py's forced_gap_cp. `forced=True` means the engine's top move at
+    # the puzzle position clearly beats the next-best alternative (or there
+    # simply wasn't a second legal reply); `refutation_gap_cp` is the raw
+    # margin, `None` when there was only one legal reply to compare against.
+    forced: bool
+    refutation_gap_cp: int | None
 
 
 def fetch_archive_urls(username: str) -> list[str]:
@@ -74,6 +81,7 @@ def find_blunders(
     depth: int,
     blunder_threshold_cp: int,
     decided_position_cp: int,
+    forced_gap_cp: int,
 ) -> list[BlunderCandidate]:
     """
     Walks one game, evaluating the position before and after every move the
@@ -109,9 +117,15 @@ def find_blunders(
         move = next_node.move
 
         if board.turn == target_color and last_move is not None and fen_before_last_move is not None:
-            info_before = engine.analyse(board, limit)
-            eval_before = info_before["score"].pov(target_color).score(mate_score=100_000)
-            pv = info_before.get("pv", [])
+            # multipv=2 so we can tell a genuinely forced refutation (the top
+            # move clearly beats the runner-up) from a position where several
+            # moves win about equally well — see BlunderCandidate.forced.
+            info_lines = engine.analyse(board, limit, multipv=2)
+            if isinstance(info_lines, dict):
+                info_lines = [info_lines]
+            best = info_lines[0]
+            eval_before = best["score"].pov(target_color).score(mate_score=100_000)
+            pv = best.get("pv", [])
 
             if eval_before is not None and eval_before > -decided_position_cp and pv:
                 board_after = board.copy()
@@ -120,6 +134,17 @@ def find_blunders(
                 eval_after = info_after["score"].pov(target_color).score(mate_score=100_000)
 
                 if eval_after is not None and eval_before - eval_after >= blunder_threshold_cp:
+                    second_eval = (
+                        info_lines[1]["score"].pov(target_color).score(mate_score=100_000)
+                        if len(info_lines) > 1
+                        else None
+                    )
+                    refutation_gap_cp = None if second_eval is None else eval_before - second_eval
+                    # No second legal reply to compare against is trivially
+                    # forced; otherwise it's forced only if the gap clears
+                    # the threshold, not just "the top move is listed first".
+                    forced = refutation_gap_cp is None or refutation_gap_cp >= forced_gap_cp
+
                     solution = [last_move.uci()] + [m.uci() for m in pv[:4]]
                     candidates.append(
                         BlunderCandidate(
@@ -127,6 +152,8 @@ def find_blunders(
                             solution=solution,
                             external_id=f"chesscom:{game_id}:{ply}",
                             rating=player_rating,
+                            forced=forced,
+                            refutation_gap_cp=refutation_gap_cp,
                         )
                     )
 
@@ -267,6 +294,7 @@ def _process_one_game(
         depth=settings.stockfish_depth,
         blunder_threshold_cp=settings.blunder_threshold_cp,
         decided_position_cp=settings.decided_position_cp,
+        forced_gap_cp=settings.forced_gap_cp,
     )
 
     for candidate in candidates:
@@ -282,6 +310,8 @@ def _process_one_game(
                 solution=json.dumps(candidate.solution),
                 rating=candidate.rating,
                 external_id=candidate.external_id,
+                forced=candidate.forced,
+                refutation_gap_cp=candidate.refutation_gap_cp,
                 delivered=False,
                 created_at=datetime.now(timezone.utc),
             )
