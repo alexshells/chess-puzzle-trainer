@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 
 from ml.puzzle_quality import PuzzleQualityAnalysis
-from ml.puzzle_rating_model import build_feature_matrix, extract_ratings, predict, train
+from ml.puzzle_rating_model import MAX_RATING, MIN_RATING, build_feature_matrix, extract_ratings, predict, train, try_load
 
 
 class FakeExample:
@@ -59,3 +61,30 @@ def test_predict_returns_a_plausible_rating_using_the_trained_pipeline():
 
     # swing=0 should land close to the ~1500 baseline this synthetic data was built around.
     assert 1300 < predicted < 1700
+
+
+def test_predict_clamps_wild_extrapolations_to_a_plausible_range():
+    rng = np.random.default_rng(0)
+    n = 300
+    swing = rng.normal(0, 200, n)
+    X = np.column_stack([swing, rng.integers(0, 2, n), rng.integers(0, 2, n), rng.normal(0, 100, n)])
+    ratings = 1500 + swing * 2 + rng.normal(0, 50, n)
+    pipeline, _ = train(X, ratings, test_size=0.25, seed=0)
+
+    # Wildly out-of-distribution input — the raw linear extrapolation would
+    # blow past any realistic puzzle rating in either direction.
+    huge_swing = PuzzleQualityAnalysis(
+        puzzle_position_eval_cp=0, setup_swing_cp=100_000, forced=True, refutation_gap_cp=200, solving_pv=[]
+    )
+    tiny_swing = PuzzleQualityAnalysis(
+        puzzle_position_eval_cp=0, setup_swing_cp=-100_000, forced=True, refutation_gap_cp=200, solving_pv=[]
+    )
+
+    assert predict(pipeline, huge_swing) == MAX_RATING or predict(pipeline, huge_swing) == MIN_RATING
+    assert predict(pipeline, tiny_swing) == MAX_RATING or predict(pipeline, tiny_swing) == MIN_RATING
+    assert MIN_RATING <= predict(pipeline, huge_swing) <= MAX_RATING
+    assert MIN_RATING <= predict(pipeline, tiny_swing) <= MAX_RATING
+
+
+def test_try_load_returns_none_when_no_model_file_exists(tmp_path: Path):
+    assert try_load(tmp_path / "does-not-exist.joblib") is None

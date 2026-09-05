@@ -27,12 +27,15 @@ import chess
 import chess.engine
 import chess.pgn
 import httpx
+from sklearn.pipeline import Pipeline
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, SessionLocal
 from ml.puzzle_quality import analyse_puzzle_quality
+from ml.puzzle_rating_model import predict as predict_rating
+from ml.puzzle_rating_model import try_load as try_load_rating_model
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +90,7 @@ def find_blunders(
     blunder_threshold_cp: int,
     decided_position_cp: int,
     forced_gap_cp: int,
+    rating_model: Pipeline | None = None,
 ) -> list[BlunderCandidate]:
     """
     Walks one game, evaluating the position before and after every move the
@@ -94,6 +98,12 @@ def find_blunders(
     didn't happen in an already-lost position (a further mistake there isn't
     an interesting puzzle) — a large *winning* swing thrown away is exactly
     what this is looking for, so the decided-position skip is one-sided.
+
+    rating_model, if given, predicts each candidate's rating from position
+    features (puzzle_rating_model.py) instead of falling back to the
+    player's own chess.com rating in that game — a heuristic, not a real
+    difficulty estimate. Defaults to None (the fallback) so this stays
+    testable without a trained model file (see test_game_import.py).
     """
     game = chess.pgn.read_game(io.StringIO(pgn_text))
     if game is None:
@@ -141,12 +151,17 @@ def find_blunders(
                     and analysis.puzzle_position_eval_cp - eval_after >= blunder_threshold_cp
                 ):
                     solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[:4]]
+                    rating = (
+                        round(predict_rating(rating_model, analysis))
+                        if rating_model is not None
+                        else player_rating
+                    )
                     candidates.append(
                         BlunderCandidate(
                             fen=fen_before_last_move,
                             solution=solution,
                             external_id=f"chesscom:{game_id}:{ply}",
-                            rating=player_rating,
+                            rating=rating,
                             forced=analysis.forced,
                             refutation_gap_cp=analysis.refutation_gap_cp,
                             setup_swing_cp=analysis.setup_swing_cp,
@@ -196,10 +211,22 @@ def run_import(user_id: int, chess_com_username: str) -> None:
             )
             session.add(progress)
         else:
+            if progress.chess_com_username.lower() != chess_com_username.lower():
+                # Linked a different chess.com account since the last run —
+                # this is a fresh scan, not a resume, so the old account's
+                # archive progress doesn't apply here. Already-found puzzles
+                # stay (they're real Puzzle rows tied to specific games by
+                # then, not something to discard over an account switch).
+                progress.games_processed = 0
+                progress.last_archive = None
             progress.status = "running"
             progress.chess_com_username = chess_com_username
         progress.error_message = None
         session.commit()
+
+        rating_model = try_load_rating_model()
+        if rating_model is None:
+            logger.warning("No trained puzzle-rating model found — falling back to the player's own chess.com rating.")
 
         try:
             archive_urls = fetch_archive_urls(chess_com_username)
@@ -228,7 +255,7 @@ def run_import(user_id: int, chess_com_username: str) -> None:
                     if games_this_run >= settings.max_games_per_run:
                         break
 
-                    _process_one_game(session, progress, game, chess_com_username, engine)
+                    _process_one_game(session, progress, game, chess_com_username, engine, rating_model)
                     games_this_run += 1
 
                 progress.last_archive = _archive_month(archive_url)
@@ -276,6 +303,7 @@ def _process_one_game(
     game: dict,
     chess_com_username: str,
     engine: chess.engine.SimpleEngine,
+    rating_model: Pipeline | None,
 ) -> None:
     white_username = game["white"]["username"]
     is_white = white_username.lower() == chess_com_username.lower()
@@ -291,6 +319,7 @@ def _process_one_game(
         blunder_threshold_cp=settings.blunder_threshold_cp,
         decided_position_cp=settings.decided_position_cp,
         forced_gap_cp=settings.forced_gap_cp,
+        rating_model=rating_model,
     )
 
     for candidate in candidates:

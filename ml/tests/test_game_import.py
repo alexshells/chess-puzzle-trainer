@@ -7,6 +7,7 @@ position, so a test controls exactly which move looks like a blunder.
 """
 
 import chess
+import numpy as np
 
 from ml.game_import import find_blunders
 
@@ -59,6 +60,16 @@ class FakeEngine:
 
         eval_cp, pv = response
         return {"score": FakeScore(eval_cp), "pv": pv}
+
+
+class FakeRatingModel:
+    """Mimics the sklearn Pipeline interface puzzle_rating_model.predict() calls — model.predict(X)[0]."""
+
+    def __init__(self, rating: float):
+        self._rating = rating
+
+    def predict(self, X) -> np.ndarray:
+        return np.array([self._rating])
 
 
 def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
@@ -197,6 +208,36 @@ def test_skips_blunders_in_an_already_lost_position():
     )
 
     assert candidates == []
+
+
+def test_uses_the_rating_model_when_given_instead_of_player_rating():
+    engine = FakeEngine(
+        [
+            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
+            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
+            (10, [_PV_MOVE]),  # after Nf3
+            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
+            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # puzzle position before Bxc6
+            (-300, [_PV_MOVE]),  # after Bxc6
+        ]
+    )
+
+    candidates = find_blunders(
+        GAME_PGN,
+        TARGET,
+        player_rating=1200,
+        game_id="test-game",
+        engine=engine,
+        depth=1,
+        blunder_threshold_cp=250,
+        decided_position_cp=600,
+        forced_gap_cp=FORCED_GAP_CP,
+        rating_model=FakeRatingModel(1837.6),
+    )
+
+    assert len(candidates) == 1
+    # Rounded model output, not player_rating (1200) — the model was provided.
+    assert candidates[0].rating == 1838
 
 
 def test_ignores_games_the_target_did_not_play_in():

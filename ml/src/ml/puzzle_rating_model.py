@@ -41,7 +41,17 @@ from ml.puzzle_quality import PuzzleQualityAnalysis
 logger = logging.getLogger(__name__)
 
 FEATURE_NAMES = CORE_FEATURE_NAMES
-_DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "var" / "puzzle_rating_model.joblib"
+# Committed, not gitignored — Railway's container filesystem is ephemeral,
+# so a model living only in var/ wouldn't survive a deploy (see CLAUDE.md).
+_DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "models" / "puzzle_rating_model.joblib"
+
+# Lichess's real puzzle ratings run roughly in this range — Ridge regression
+# is unconstrained and can extrapolate a wild value for an input far outside
+# the training distribution, so predictions are clamped to something a human
+# would recognize as a plausible puzzle rating rather than e.g. a negative
+# number or something so large it can only be a bug.
+MIN_RATING = 400
+MAX_RATING = 3000
 
 
 def build_feature_matrix(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
@@ -77,14 +87,26 @@ def train(X: np.ndarray, ratings: np.ndarray, *, test_size: float, seed: int) ->
     return pipeline, report
 
 
-def load(path: Path) -> Pipeline:
+def load(path: Path = _DEFAULT_MODEL_PATH) -> Pipeline:
     return joblib.load(path)
 
 
+def try_load(path: Path = _DEFAULT_MODEL_PATH) -> Pipeline | None:
+    """
+    Like load(), but returns None instead of raising when no trained model
+    exists at this path — the caller's signal to fall back to a simpler
+    heuristic (see game_import.py) rather than a live-import-breaking crash.
+    """
+    if not path.exists():
+        return None
+    return load(path)
+
+
 def predict(model: Pipeline, analysis: PuzzleQualityAnalysis) -> float:
-    """Returns a predicted Lichess-style rating for this puzzle position."""
+    """Returns a predicted Lichess-style rating for this puzzle position, clamped to [MIN_RATING, MAX_RATING]."""
     X = np.array([core_features_from_analysis(analysis)])
-    return float(model.predict(X)[0])
+    raw = float(model.predict(X)[0])
+    return max(MIN_RATING, min(MAX_RATING, raw))
 
 
 def main() -> None:

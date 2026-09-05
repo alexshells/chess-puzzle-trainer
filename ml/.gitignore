@@ -3,8 +3,10 @@ __pycache__/
 *.pyc
 .env
 
-# Downloaded/generated — build_training_dataset.py fetches the CSV itself;
-# trained model artifacts are regenerable from the DB, not source.
+# Downloaded/generated — build_training_dataset.py fetches the CSV itself.
+# Trained model artifacts you actually want the live app to use belong in
+# ml/models/ instead (committed — see CLAUDE.md's Phase 2.5 note), not
+# here: Railway's container filesystem is ephemeral, so anything only
+# living in var/ is gone on the next deploy.
 var/
 *.csv.zst
-*.joblib

@@ -33,7 +33,9 @@ from ml.puzzle_quality import PuzzleQualityAnalysis
 logger = logging.getLogger(__name__)
 
 FEATURE_NAMES = CORE_FEATURE_NAMES + ["rating"]
-_DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "var" / "puzzle_quality_model.joblib"
+# Committed, not gitignored — Railway's container filesystem is ephemeral,
+# so a model living only in var/ wouldn't survive a deploy (see CLAUDE.md).
+_DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "models" / "puzzle_quality_model.joblib"
 
 
 def build_feature_matrix(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
