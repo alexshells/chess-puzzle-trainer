@@ -253,6 +253,22 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     `winget install Stockfish.Stockfish` and then point `STOCKFISH_PATH` in
     `ml/.env` at the installed `.exe`, since it won't land on `PATH`
     automatically the way the Linux container's apt package does
+- Phase 2.5 (built): **puzzle-quality feedback**. A thumbs up/down on any
+  solved/given-up "My Games" puzzle (`MyGamesView.vue`, backend's
+  `PuzzleFeedback` entity + `PuzzleFeedbackController`,
+  `POST /api/puzzles/{id}/feedback`) — the label a future puzzle-quality
+  model will train against, since `find_blunders`' fixed eval-swing
+  threshold is a heuristic, not a judgment of whether a position is
+  actually instructive. One row per `(user, puzzle)`; voting again
+  overwrites rather than accumulating ("is this any good", not a tally).
+  Scoped to puzzles the voting user owns — a 403 otherwise, since the
+  question only makes sense for a user's own generated puzzles, not the
+  already-curated shared Lichess pool. **`ml/` doesn't read this table
+  yet** — the model that consumes it (feature set, and whether it's a
+  small classifier over hand-engineered Stockfish signals vs. something
+  larger) is a deliberately separate, not-yet-made decision; wiring this
+  up prematurely around an unpicked model would've meant guessing at a
+  feature schema before there was any real data to justify one.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
