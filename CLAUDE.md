@@ -295,27 +295,71 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     result in a new ml/-owned table, `PuzzleQualityTrainingExample`
     (`source`/`external_id` so a later batch of examples sourced from our
     own `puzzle_feedback` votes can live in the same table).
-  - **Training** (`ml/src/ml/train_puzzle_quality_model.py`): logistic
-    regression, not something bigger — at a few thousand examples from one
-    bootstrap source, a small linear model is less likely to overfit than
-    gradient-boosted trees would be, and its coefficients are directly
-    readable. **Labels on a median split of `Popularity` within the
-    sample, not a fixed "> 0" cutoff** — measured on a real 5.6k-row
-    sample, 99.6% of already-published Lichess puzzles have positive
-    Popularity (they're pre-curated, so very few end up net-downvoted),
-    so an absolute-zero threshold produces a label that's almost entirely
-    one class, not a real classification problem. "More/less popular than
-    its peers in this sample" is the question this data can actually
-    answer. First real run (5,618 examples): AUC 0.570 — modest, but a
-    genuinely balanced problem and above chance, and `forced`'s
-    coefficient came out positive (a clearly-forced refutation correlates
-    with higher relative popularity) — a real, if small, validation of the
-    forced/unique feature above. **Inference isn't wired into
-    `game_import.py` yet** — the trained artifact
-    (`ml/var/puzzle_quality_model.joblib`, gitignored, regenerable from the
-    DB) exists but nothing scores live candidates with it; that, plus
-    eventually blending in our own `puzzle_feedback` votes as they
-    accumulate, is the next step whenever this gets picked back up.
+  - **Modular by design, on purpose**: every model built on this data
+    shares the same three-layer split, so a top-level caller only ever
+    needs to import one small, well-defined thing.
+    `ml/src/ml/puzzle_features.py` is the *only* place that turns a
+    `PuzzleQualityAnalysis` (or a stored `PuzzleQualityTrainingExample`)
+    into numbers (`CORE_FEATURE_NAMES`, `core_features()`,
+    `build_core_feature_matrix()`) — it knows nothing about labels or
+    models. Each model module (`puzzle_quality_model.py`,
+    `puzzle_rating_model.py`) owns its own label extraction, any feature
+    it layers on top of that shared core, and a `train()` / `load()` /
+    `predict()` triplet — e.g. a future caller does exactly
+    `model = puzzle_rating_model.load(path); rating =
+    puzzle_rating_model.predict(model, analysis)` and needs to know
+    nothing else about how it was trained. A new model (categorization is
+    the obvious next one) is a new module in this same shape, not a
+    change to the existing ones.
+  - **Puzzle-quality classifier** (`ml/src/ml/puzzle_quality_model.py`):
+    logistic regression, not something bigger — at a few thousand examples
+    from one bootstrap source, a small linear model is less likely to
+    overfit than gradient-boosted trees would be, and its coefficients are
+    directly readable. Labels on a median split of `Popularity` within the
+    sample, not a fixed "> 0" cutoff — measured on a real 5.6k-row sample,
+    99.6% of already-published Lichess puzzles have positive Popularity
+    (they're pre-curated, so very few end up net-downvoted), so an
+    absolute-zero threshold produces a label that's almost entirely one
+    class, not a real classification problem. "More/less popular than its
+    peers in this sample" is the question this data can actually answer.
+    Its one feature beyond the shared core is `rating` — legitimate
+    context for predicting popularity, but not something its sibling model
+    below can use, since there `rating` *is* the label. First real run
+    (5,618 examples): AUC 0.570 — modest, but a genuinely balanced problem
+    and above chance, and `forced`'s coefficient came out positive
+    (a clearly-forced refutation correlates with higher relative
+    popularity) — a real, if small, validation of the forced/unique
+    feature above.
+  - **Puzzle-rating regressor** (`ml/src/ml/puzzle_rating_model.py`):
+    predicts a Lichess-style difficulty rating directly from position
+    features — a different problem from the quality classifier's, and a
+    structurally necessary one. Lichess's puzzle ratings are themselves
+    Glicko ratings earned from thousands of real solve attempts across many
+    different-strength solvers (the same mechanism `GlickoRatingService`
+    already implements for us) — that only works because a Lichess puzzle
+    gets shown to thousands of strangers. A "My Games" puzzle is generated
+    for exactly one person and will likely be solved once, maybe never
+    again — there's no crowd to converge a rating from, so it has to be
+    predicted up front instead of earned. Ridge regression (same
+    small-sample-size reasoning as the classifier), trained on Lichess's
+    own puzzles since their `Rating` column *is* that crowd-converged
+    value. First real run (5,618 examples): R² 0.251, MAE ~397 rating
+    points — a real but modest signal (three-quarters of the variance in
+    human-perceived difficulty isn't explained by these four features
+    alone, and an average miss of ~400 points is too noisy to serve
+    puzzles at a precise rating on its own), but an interpretable one:
+    `forced` and `refutation_gap_cp` both came out negative — an
+    "obvious," clearly-forced solution rates *easier*, one with close
+    alternatives rates *harder*, which matches real chess intuition about
+    what makes a tactic hard to be sure of.
+  - **Neither model's inference is wired into `game_import.py` yet** — the
+    trained artifacts (`ml/var/puzzle_quality_model.joblib`,
+    `puzzle_rating_model.joblib`, gitignored, regenerable from the DB)
+    exist but nothing scores live candidates with them. That, categorizing
+    puzzles (the third leg of this — see design doc discussion), richer
+    features (mate distance, material swing, game phase), and eventually
+    blending in our own `puzzle_feedback` votes as they accumulate are all
+    open next steps.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
@@ -466,9 +510,10 @@ uv run uvicorn ml.main:app --port 8001   # backend's ML_SERVICE_URL points here
 uv run alembic upgrade head               # apply ml/'s own migrations
 uv run pytest
 
-# Puzzle-quality model (Phase 2.5, see above) — not part of normal dev setup
+# Puzzle-quality/rating models (Phase 2.5, see above) — not part of normal dev setup
 uv run python -m ml.build_training_dataset --sample-size 5000   # downloads the Lichess CSV on first run
-uv run python -m ml.train_puzzle_quality_model
+uv run python -m ml.puzzle_quality_model
+uv run python -m ml.puzzle_rating_model
 ```
 
 Both `frontend/` and `backend/` have their own `public/` — a common mistake

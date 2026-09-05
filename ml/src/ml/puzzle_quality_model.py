@@ -1,18 +1,17 @@
 """
-Trains a first-pass puzzle-quality classifier on PuzzleQualityTrainingExample
-rows (see build_training_dataset.py) — label = whether Lichess's own users
-voted a puzzle net-positive (Popularity > 0), features = the same
-puzzle_quality.py signals game_import.py computes for its own candidates.
+Puzzle-quality classifier: predicts whether a puzzle is relatively more or
+less popular than its peers, given puzzle_features.py's shared core features
+plus this model's own `rating` — legitimate context here (a puzzle's
+difficulty can plausibly affect how many people like it) but not something
+puzzle_rating_model.py's sibling model can use, since there `rating` is the
+label being predicted, not an input.
 
-Logistic regression, not a bigger model — deliberately. At this sample size
-(low thousands, one bootstrap source) a small linear model is less likely to
-overfit than something like gradient-boosted trees, and its coefficients are
-directly readable (see the printed report), which matters when this is the
-first pass, not the last, of this model. Swapping in something larger later
-is a one-line change once there's more data (in particular, our own
-puzzle_feedback votes) to justify it.
+Logistic regression, not something bigger — deliberately. At this sample
+size (low thousands, one bootstrap source) a small linear model is less
+likely to overfit than gradient-boosted trees would be, and its
+coefficients are directly readable (see main()'s printed report).
 
-Run via `uv run python -m ml.train_puzzle_quality_model`.
+Run via `uv run python -m ml.puzzle_quality_model`.
 """
 
 import argparse
@@ -26,49 +25,25 @@ from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sqlalchemy import select
 
-from ml.db import PuzzleQualityTrainingExample, SessionLocal
+from ml.db import PuzzleQualityTrainingExample
+from ml.puzzle_features import CORE_FEATURE_NAMES, build_core_feature_matrix, core_features_from_analysis, load_examples
+from ml.puzzle_quality import PuzzleQualityAnalysis
 
 logger = logging.getLogger(__name__)
 
-FEATURE_NAMES = ["setup_swing_cp", "forced", "has_second_line", "refutation_gap_cp", "rating"]
+FEATURE_NAMES = CORE_FEATURE_NAMES + ["rating"]
 _DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "var" / "puzzle_quality_model.joblib"
 
 
-def load_examples() -> list[PuzzleQualityTrainingExample]:
-    session = SessionLocal()
-    try:
-        return list(session.execute(select(PuzzleQualityTrainingExample)).scalars().all())
-    finally:
-        session.close()
+def build_feature_matrix(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
+    core = build_core_feature_matrix(examples)
+    rating = np.array([[ex.rating] for ex in examples], dtype=float)
+    return np.hstack([core, rating])
 
 
-def to_feature_matrix(examples: list[PuzzleQualityTrainingExample]) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Returns (X, popularity) — raw Popularity, not yet a binary label (see
-    train() for why: it needs the whole sample's distribution first).
-    refutation_gap_cp is null when there was no second legal reply to compare
-    against (trivially forced) — imputed to 0 with a separate has_second_line
-    flag rather than dropped, so "no runner-up at all" stays distinguishable
-    from "runner-up was exactly as good".
-    """
-    rows = []
-    popularity = []
-    for ex in examples:
-        has_second_line = ex.refutation_gap_cp is not None
-        rows.append(
-            [
-                ex.setup_swing_cp,
-                1.0 if ex.forced else 0.0,
-                1.0 if has_second_line else 0.0,
-                ex.refutation_gap_cp if has_second_line else 0.0,
-                ex.rating,
-            ]
-        )
-        popularity.append(ex.popularity)
-
-    return np.array(rows, dtype=float), np.array(popularity, dtype=float)
+def extract_popularity(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
+    return np.array([ex.popularity for ex in examples], dtype=float)
 
 
 def train(X: np.ndarray, popularity: np.ndarray, *, test_size: float, seed: int) -> tuple[Pipeline, dict]:
@@ -109,6 +84,16 @@ def train(X: np.ndarray, popularity: np.ndarray, *, test_size: float, seed: int)
     return pipeline, report
 
 
+def load(path: Path) -> Pipeline:
+    return joblib.load(path)
+
+
+def predict(model: Pipeline, analysis: PuzzleQualityAnalysis, rating: int) -> float:
+    """Returns P(relatively more popular than its peers), in [0, 1]."""
+    X = np.array([core_features_from_analysis(analysis) + [float(rating)]])
+    return float(model.predict_proba(X)[0, 1])
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -123,7 +108,8 @@ def main() -> None:
     if len(examples) < 50:
         logger.warning("Very few examples — treat any metrics below as a pipeline smoke test, not a real result.")
 
-    X, popularity = to_feature_matrix(examples)
+    X = build_feature_matrix(examples)
+    popularity = extract_popularity(examples)
     pipeline, report = train(X, popularity, test_size=args.test_size, seed=args.seed)
 
     logger.info("n_train=%d n_test=%d positive_rate=%.3f", report["n_train"], report["n_test"], report["positive_rate"])
