@@ -188,3 +188,56 @@ class PuzzleQualityTrainingExample(Base):
     popularity = Column(Integer, nullable=False)
     nb_plays = Column(Integer, nullable=False)
     created_at = Column(DateTime, nullable=False)
+
+
+class BanditPull(Base):
+    """
+    One row per "My Games" puzzle delivery — the immutable event log the
+    delivery bandit (delivery_bandit.py) is built from. `context` and
+    `precision_matrix`/`weighted_reward_sum` (see BanditArmState below) are
+    JSON-encoded plain lists, not opaque blobs, specifically so a later
+    analysis script can do `np.array(json.loads(row.context))` and plot
+    things directly — deliberately not hidden behind a serialized object.
+
+    `reward` stays null until the corresponding puzzle_feedback star rating
+    comes back (see main.py's reward endpoint); a pull with no reward yet
+    just means the user hasn't rated that puzzle, not a missing/broken row.
+    `BanditArmState` is fully derivable by replaying this table in order, so
+    it's always safe to recompute from scratch (same escape hatch as
+    backend's app:recompute-category-ratings) if the model ever changes.
+    """
+
+    __tablename__ = "bandit_pull"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    puzzle_id = Column(Integer, nullable=False, index=True)
+    arm = Column(String(32), nullable=False)
+    # JSON-encoded context vector used for this pull's arm choice, e.g. "[1.0, 0.3]".
+    context = Column(Text, nullable=False)
+    reward = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+    rewarded_at = Column(DateTime, nullable=True)
+
+
+class BanditArmState(Base):
+    """
+    One row per DeliveryArm — the *current* posterior, derived from
+    BanditPull (see its docstring). precision_matrix and weighted_reward_sum
+    are JSON-encoded nested/plain lists of the exact arrays
+    delivery_bandit.ArmPosterior wraps; the posterior mean/covariance are
+    deliberately not stored here too, so there's exactly one place (those
+    two arrays) that defines an arm's belief, not two that could drift out
+    of sync.
+    """
+
+    __tablename__ = "bandit_arm_state"
+
+    id = Column(Integer, primary_key=True)
+    arm = Column(String(32), nullable=False, unique=True)
+    # JSON-encoded (d, d) nested list, e.g. "[[1.0, 0.0], [0.0, 1.0]]".
+    precision_matrix = Column(Text, nullable=False)
+    # JSON-encoded (d,) list, e.g. "[0.0, 0.0]".
+    weighted_reward_sum = Column(Text, nullable=False)
+    pull_count = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, nullable=False)
