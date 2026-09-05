@@ -229,6 +229,27 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   month scanned, running totals) so a second "start" call resumes deeper
   into history instead of re-scanning — puzzles arrive as soon as a game
   yields one, more keep coming while you play.
+  - **Resumability is tracked at two levels, not one — `ScannedGame`
+    (one row per game actually run through Stockfish) is the real source
+    of truth; `game_import_progress.last_archive` is only a coarse "confirmed
+    fully scanned through this month" pointer, purely to avoid an HTTP
+    re-fetch of months with nothing left to do.** `last_archive` only
+    advances once every game in a month either was already in
+    `ScannedGame` or got added to it this run (`_select_games_to_process`
+    in `game_import.py`, unit tested directly since this exact bookkeeping
+    is easy to get subtly wrong). The original design used `last_archive`
+    alone and had a real, confirmed-live bug: a month cut off mid-way by
+    `max_games_per_run` still got marked fully scanned, permanently
+    skipping the rest of that month's games on every future run — found by
+    re-reading the code, not by a user report, and reproduced live locally
+    (3 consecutive runs at a small budget correctly kept `last_archive`
+    unadvanced and grew `ScannedGame` by exactly the budget each time, no
+    duplicates, no gaps). **Known limitation**: this doesn't retroactively
+    recover games already skipped by an existing account's `last_archive`
+    from before this fix — `ScannedGame` has no history for games scanned
+    under the old code, so healing that would mean fully re-scanning (and
+    re-paying the Stockfish cost for) those accounts' entire history, not
+    something to do automatically without asking.
   - **`ml/` still never writes to `puzzle`** (see the ownership-boundary
     docstring in `db.py`) — found candidates land in `ml/`'s own
     `personal_puzzle_candidate` table instead. `backend/`'s

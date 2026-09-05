@@ -256,3 +256,31 @@ class BanditArmState(Base):
     weighted_reward_sum = Column(Text, nullable=False)
     pull_count = Column(Integer, nullable=False, default=0)
     updated_at = Column(DateTime, nullable=False)
+
+
+class ScannedGame(Base):
+    """
+    One row per chess.com game a user's import has actually run through
+    Stockfish — the source of truth for "don't redo this" (see
+    game_import.py's run_import), independent of GameImportProgress's
+    last_archive, which only tracks whole *months* confirmed fully done.
+    A month that got cut off mid-way by max_games_per_run can't safely
+    advance last_archive, so a resume re-fetches that month's game list —
+    cheap — and this table is what lets it skip the already-analyzed games
+    within it without re-running Stockfish on them. Written regardless of
+    whether a game produced any PersonalPuzzleCandidate — a game with no
+    tactical swing is just as "done" as one that produced ten.
+
+    Scoped by user_id, not global: game ids are unique across all of
+    chess.com regardless, but this also means switching back to a
+    previously-linked chess.com account skips a full re-scan of its
+    games rather than redoing the work a second time.
+    """
+
+    __tablename__ = "scanned_game"
+    __table_args__ = (UniqueConstraint("user_id", "game_id", name="uq_scanned_game_user_game"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    game_id = Column(String(64), nullable=False)
+    scanned_at = Column(DateTime, nullable=False)

@@ -11,6 +11,17 @@ and ml/'s own DB. It's meant to run in a background thread (see main.py),
 checkpointing progress after every game so a second `start` call resumes
 rather than re-scanning from the beginning.
 
+Resumability is tracked at two levels, deliberately not just one:
+`GameImportProgress.last_archive` is a coarse "confirmed fully scanned
+through this month" pointer, purely so a resume doesn't re-fetch (via HTTP)
+the game list for months with nothing left to do. `ScannedGame` is the
+actual source of truth, one row per game actually run through Stockfish —
+`last_archive` only advances once every game in a month either was already
+in that table or got added to it this run (see `_select_games_to_process`).
+Relying on `last_archive` alone was the original design and had a real bug:
+a month cut off mid-way by `max_games_per_run` still got marked fully
+scanned, permanently skipping the rest of its games on every future run.
+
 ml/ never writes to `puzzle` (backend/Doctrine owns that table — see
 db.py's module docstring). Candidates land in `personal_puzzle_candidate`
 instead; backend polls for undelivered ones and persists each as a real
@@ -32,7 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ml.config import settings
-from ml.db import GameImportProgress, PersonalPuzzleCandidate, SessionLocal
+from ml.db import GameImportProgress, PersonalPuzzleCandidate, ScannedGame, SessionLocal
 from ml.puzzle_quality import analyse_puzzle_quality
 from ml.puzzle_quality_model import predict as predict_quality
 from ml.puzzle_quality_model import try_load as try_load_quality_model
@@ -258,11 +269,15 @@ def run_import(user_id: int, chess_com_username: str) -> None:
             session.commit()
             return
 
-        # Newest first; skip any month already fully scanned by a previous run.
+        # Newest first; skip any month *confirmed* fully scanned by a
+        # previous run — a month last_archive hasn't reached yet might still
+        # have unscanned games in it (see the month_fully_processed check
+        # below), so this is purely an HTTP-fetch shortcut, never the source
+        # of truth for what's actually been analyzed (that's ScannedGame).
         archive_urls = list(reversed(archive_urls))
         if progress.last_archive:
-            already_scanned = _already_scanned(archive_urls, progress.last_archive)
-            archive_urls = [u for u in archive_urls if _archive_month(u) not in already_scanned]
+            already_confirmed_done = _already_scanned(archive_urls, progress.last_archive)
+            archive_urls = [u for u in archive_urls if _archive_month(u) not in already_confirmed_done]
 
         engine = chess.engine.SimpleEngine.popen_uci(settings.stockfish_path)
         try:
@@ -272,14 +287,20 @@ def run_import(user_id: int, chess_com_username: str) -> None:
                     break
 
                 games = [g for g in fetch_games(archive_url) if _is_eligible(g)]
-                for game in games:
-                    if games_this_run >= settings.max_games_per_run:
-                        break
+                already_scanned_ids = _load_scanned_game_ids(session, progress.user_id, games)
+                remaining_budget = settings.max_games_per_run - games_this_run
+                to_process, month_fully_processed = _select_games_to_process(
+                    games, already_scanned_ids, remaining_budget
+                )
 
+                for game in to_process:
                     _process_one_game(session, progress, game, chess_com_username, engine, rating_model, quality_model)
                     games_this_run += 1
 
-                progress.last_archive = _archive_month(archive_url)
+                # Only advance past this month once nothing's left unscanned
+                # in it — otherwise the next run needs to come back here.
+                if month_fully_processed:
+                    progress.last_archive = _archive_month(archive_url)
                 session.commit()
 
             progress.status = "done"
@@ -316,6 +337,43 @@ def _already_scanned(archive_urls: list[str], last_archive: str) -> set[str]:
         if month == last_archive:
             break
     return scanned
+
+
+def _select_games_to_process(
+    games: list[dict], already_scanned_ids: set[str], remaining_budget: int
+) -> tuple[list[dict], bool]:
+    """
+    Pure decision logic, kept separate from the DB/HTTP calls around it so
+    it's directly unit-testable (see test_game_import.py) — this is exactly
+    the kind of "did we actually finish this month" bookkeeping that's easy
+    to get subtly wrong (see this module's docstring on the bug this fixed).
+
+    Returns (games_to_process, month_fully_processed). games_to_process
+    skips anything already in already_scanned_ids for free — that doesn't
+    count against remaining_budget, since no Stockfish work is needed for
+    it. month_fully_processed is True only if every eligible game here was
+    either already scanned or got included in games_to_process; False the
+    moment the budget runs out first, so the caller knows this month still
+    has unscanned games left and must not advance past it.
+    """
+    to_process = []
+    for game in games:
+        if _game_id(game) in already_scanned_ids:
+            continue
+        if len(to_process) >= remaining_budget:
+            return to_process, False
+        to_process.append(game)
+    return to_process, True
+
+
+def _load_scanned_game_ids(session: Session, user_id: int, games: list[dict]) -> set[str]:
+    candidate_ids = [_game_id(g) for g in games]
+    if not candidate_ids:
+        return set()
+    rows = session.execute(
+        select(ScannedGame.game_id).where(ScannedGame.user_id == user_id, ScannedGame.game_id.in_(candidate_ids))
+    ).all()
+    return {row[0] for row in rows}
 
 
 def _process_one_game(
@@ -368,6 +426,12 @@ def _process_one_game(
             )
         )
         progress.puzzles_found += 1
+
+    # Recorded regardless of whether this game produced any candidates — a
+    # game with no tactical swing is just as "done" as one that produced
+    # ten, and either way there's no reason to ever run it through
+    # Stockfish again.
+    session.add(ScannedGame(user_id=progress.user_id, game_id=_game_id(game), scanned_at=datetime.now(timezone.utc)))
 
     progress.games_processed += 1
     progress.updated_at = datetime.now(timezone.utc)

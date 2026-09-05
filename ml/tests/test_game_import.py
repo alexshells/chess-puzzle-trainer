@@ -9,7 +9,7 @@ position, so a test controls exactly which move looks like a blunder.
 import chess
 import numpy as np
 
-from ml.game_import import find_blunders
+from ml.game_import import _select_games_to_process, find_blunders
 
 TARGET = "player_one"
 FORCED_GAP_CP = 100
@@ -371,3 +371,72 @@ def test_ignores_games_the_target_did_not_play_in():
 
     assert candidates == []
     assert engine.calls == 0
+
+
+def _game(game_id: str) -> dict:
+    return {"uuid": game_id}
+
+
+def test_select_games_processes_everything_when_budget_covers_it_all():
+    games = [_game("a"), _game("b"), _game("c")]
+
+    to_process, month_fully_processed = _select_games_to_process(games, already_scanned_ids=set(), remaining_budget=10)
+
+    assert [g["uuid"] for g in to_process] == ["a", "b", "c"]
+    assert month_fully_processed is True
+
+
+def test_select_games_stops_at_the_budget_and_reports_incomplete():
+    games = [_game("a"), _game("b"), _game("c")]
+
+    to_process, month_fully_processed = _select_games_to_process(games, already_scanned_ids=set(), remaining_budget=2)
+
+    # This is the exact bug this function fixes: a month cut off by the
+    # budget must never be reported as fully processed, or the caller would
+    # advance last_archive past it and permanently skip "c".
+    assert [g["uuid"] for g in to_process] == ["a", "b"]
+    assert month_fully_processed is False
+
+
+def test_select_games_skips_already_scanned_ones_for_free():
+    games = [_game("a"), _game("b"), _game("c")]
+
+    # Budget of 1 would normally only allow one game — but "a" is already
+    # scanned, so it doesn't consume any of the budget, and both "b" and
+    # "c" fit... except "c" doesn't fit a budget of 1, so only "b" does.
+    to_process, month_fully_processed = _select_games_to_process(
+        games, already_scanned_ids={"a"}, remaining_budget=1
+    )
+
+    assert [g["uuid"] for g in to_process] == ["b"]
+    assert month_fully_processed is False
+
+
+def test_select_games_is_fully_processed_when_only_already_scanned_games_remain():
+    games = [_game("a"), _game("b")]
+
+    # Zero budget left, but everything here was already scanned in a
+    # previous run — this month IS done, and last_archive should be free to
+    # advance past it even though there's no budget to spare.
+    to_process, month_fully_processed = _select_games_to_process(
+        games, already_scanned_ids={"a", "b"}, remaining_budget=0
+    )
+
+    assert to_process == []
+    assert month_fully_processed is True
+
+
+def test_select_games_is_not_fully_processed_when_budget_is_zero_and_work_remains():
+    games = [_game("a")]
+
+    to_process, month_fully_processed = _select_games_to_process(games, already_scanned_ids=set(), remaining_budget=0)
+
+    assert to_process == []
+    assert month_fully_processed is False
+
+
+def test_select_games_handles_an_empty_game_list():
+    to_process, month_fully_processed = _select_games_to_process([], already_scanned_ids=set(), remaining_budget=10)
+
+    assert to_process == []
+    assert month_fully_processed is True
