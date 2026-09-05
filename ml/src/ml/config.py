@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # feel like "convert a winning endgame" rather than "spot the tactic".
     max_solver_moves: int = 3
 
+    # Delivery bandit (see delivery_bandit.py) — Bayesian linear regression
+    # per arm over a 1-5 star reward. noise_variance is the assumed spread
+    # of a rating around its arm's true predicted value (a fixed, configured
+    # guess, not learned); prior_precision is the regularization strength of
+    # each arm's starting belief before any pulls — smaller means a wider,
+    # more easily-overridden prior.
+    bandit_noise_variance: float = 1.0
+    bandit_prior_precision: float = 1.0
+
     @property
     def resolved_database_url(self) -> str:
         prefix = "sqlite:///"
