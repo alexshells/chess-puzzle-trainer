@@ -100,6 +100,11 @@ main { padding: 2rem 1rem; text-align: center; display: flex; flex-direction: co
 .nav-item.has-submenu .submenu {
   display: none;
   position: absolute;
+  /* top: 100% lands right at the bottom of .nav-item's padding-bottom (the
+     invisible hover-bridge below "Puzzles") — no margin-top here, since any
+     gap between that and the submenu itself is dead space the cursor has to
+     cross while hovering nothing, which drops the hover state before it
+     ever reaches the menu. */
   top: 100%;
   left: 0;
   flex-direction: column;
@@ -108,7 +113,6 @@ main { padding: 2rem 1rem; text-align: center; display: flex; flex-direction: co
   border: 1px solid #3a352c;
   border-radius: 6px;
   padding: 0.4rem;
-  margin-top: 0.35rem;
   z-index: 10;
 }
 .nav-item.has-submenu:hover .submenu,
