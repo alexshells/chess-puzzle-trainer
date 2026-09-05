@@ -7,12 +7,12 @@ use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 
 /**
- * A thumbs up/down on a "My Games" chess.com-derived puzzle — the label a
- * future puzzle-quality model (see CLAUDE.md's ml/ section) will train
- * against. One row per (user, puzzle); voting again overwrites rather than
- * accumulating, since this is "is this puzzle any good", not a tally.
- * Feedback only makes sense on a puzzle's owner, enforced by the controller
- * rather than here — an entity-level check would need a second query anyway.
+ * A 1-5 star rating on a "My Games" chess.com-derived puzzle — the reward
+ * signal the delivery bandit (see CLAUDE.md's ml/ section) learns from. One
+ * row per (user, puzzle); rating again overwrites rather than accumulating,
+ * since this is "how good was this puzzle", not a tally. Feedback only makes
+ * sense on a puzzle's owner, enforced by the controller rather than here —
+ * an entity-level check would need a second query anyway.
  */
 #[ORM\Entity(repositoryClass: PuzzleFeedbackRepository::class)]
 #[ORM\UniqueConstraint(name: 'uniq_puzzle_feedback_user_puzzle', columns: ['user_id', 'puzzle_id'])]
@@ -32,16 +32,16 @@ class PuzzleFeedback
     private Puzzle $puzzle;
 
     #[ORM\Column]
-    private bool $thumbsUp;
+    private int $stars;
 
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private \DateTimeImmutable $createdAt;
 
-    public function __construct(User $user, Puzzle $puzzle, bool $thumbsUp)
+    public function __construct(User $user, Puzzle $puzzle, int $stars)
     {
         $this->user = $user;
         $this->puzzle = $puzzle;
-        $this->thumbsUp = $thumbsUp;
+        $this->stars = $stars;
         $this->createdAt = new \DateTimeImmutable();
     }
 
@@ -60,14 +60,14 @@ class PuzzleFeedback
         return $this->puzzle;
     }
 
-    public function isThumbsUp(): bool
+    public function getStars(): int
     {
-        return $this->thumbsUp;
+        return $this->stars;
     }
 
-    public function setThumbsUp(bool $thumbsUp): static
+    public function setStars(int $stars): static
     {
-        $this->thumbsUp = $thumbsUp;
+        $this->stars = $stars;
 
         return $this;
     }

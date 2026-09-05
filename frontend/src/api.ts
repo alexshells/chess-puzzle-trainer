@@ -197,7 +197,7 @@ export function fetchPersonalPuzzle(token: string): Promise<Puzzle> {
   return request('/api/puzzles/personal/random', token)
 }
 
-/** Thumbs up/down on a "My Games" puzzle — only valid for puzzles the caller owns. */
-export function submitPuzzleFeedback(puzzleId: number, thumbsUp: boolean, token: string): Promise<{ thumbsUp: boolean }> {
-  return postJson(`/api/puzzles/${puzzleId}/feedback`, { thumbsUp }, token)
+/** A 1-5 star rating on a "My Games" puzzle — only valid for puzzles the caller owns. */
+export function submitPuzzleFeedback(puzzleId: number, stars: number, token: string): Promise<{ stars: number }> {
+  return postJson(`/api/puzzles/${puzzleId}/feedback`, { stars }, token)
 }

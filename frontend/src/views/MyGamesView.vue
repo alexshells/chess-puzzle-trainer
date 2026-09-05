@@ -28,10 +28,11 @@ const solved = ref(false)
 const gaveUp = ref(false)
 const solvedCount = ref(0)
 const ratingChange = ref<number | null>(null)
-// Whichever way the user last voted on the current puzzle, or null before
-// they've voted — feedback is upsert-able, so re-clicking the other button
-// just overwrites their previous vote rather than needing a separate "undo".
-const feedbackGiven = ref<boolean | null>(null)
+// 1-5 stars last given for the current puzzle, or null before rating it —
+// feedback is upsert-able, so clicking a different star just overwrites the
+// previous rating rather than needing a separate "undo".
+const feedbackGiven = ref<number | null>(null)
+const STAR_VALUES = [1, 2, 3, 4, 5]
 
 let solveStartedAt = 0
 let attemptRecorded = false
@@ -142,11 +143,11 @@ function handleGaveUp() {
   maybeRecordAttempt(false)
 }
 
-function giveFeedback(thumbsUp: boolean) {
+function giveFeedback(stars: number) {
   if (!session.value || !currentPuzzle.value?.id) return
   const puzzleId = currentPuzzle.value.id
-  feedbackGiven.value = thumbsUp // optimistic — this is a label, not a rating, so a failed retry isn't worth blocking the UI over
-  submitPuzzleFeedback(puzzleId, thumbsUp, session.value.token).catch((err) => {
+  feedbackGiven.value = stars // optimistic — a failed retry isn't worth blocking the UI over
+  submitPuzzleFeedback(puzzleId, stars, session.value.token).catch((err) => {
     console.error('Failed to submit puzzle feedback', err)
   })
 }
@@ -210,18 +211,16 @@ onUnmounted(() => {
           </p>
 
           <div v-if="solved || gaveUp" class="feedback">
-            <span class="feedback-prompt">Was this a good puzzle?</span>
+            <span class="feedback-prompt">Rate this puzzle:</span>
             <button
-              :class="['feedback-vote', { active: feedbackGiven === true }]"
-              @click="giveFeedback(true)"
+              v-for="value in STAR_VALUES"
+              :key="value"
+              class="star"
+              :class="{ filled: feedbackGiven !== null && value <= feedbackGiven }"
+              :aria-label="`${value} star${value === 1 ? '' : 's'}`"
+              @click="giveFeedback(value)"
             >
-              Good puzzle
-            </button>
-            <button
-              :class="['feedback-vote', { active: feedbackGiven === false }]"
-              @click="giveFeedback(false)"
-            >
-              Not helpful
+              {{ feedbackGiven !== null && value <= feedbackGiven ? '★' : '☆' }}
             </button>
           </div>
 
@@ -272,16 +271,16 @@ onUnmounted(() => {
 .delta.positive { color: #9dc98a; }
 .delta.negative { color: #d98c8c; }
 .delta.neutral { color: #cfc6b3; }
-.feedback { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
-.feedback-prompt { color: #cfc6b3; font-size: 0.85rem; }
-.feedback-vote {
+.feedback { display: flex; align-items: center; gap: 0.25rem; margin-top: 0.75rem; }
+.feedback-prompt { color: #cfc6b3; font-size: 0.85rem; margin-right: 0.25rem; }
+.star {
   background: transparent;
-  color: #cfc6b3;
-  border: 1px solid #47423a;
-  border-radius: 4px;
-  padding: 0.3rem 0.7rem;
-  font-size: 0.85rem;
+  border: none;
+  color: #6b6459;
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0.1rem;
   cursor: pointer;
 }
-.feedback-vote.active { border-color: #b8985a; color: #ede6d6; }
+.star.filled { color: #b8985a; }
 </style>
