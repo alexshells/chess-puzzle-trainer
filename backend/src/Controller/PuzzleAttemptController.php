@@ -49,6 +49,12 @@ class PuzzleAttemptController
         $attempt = new PuzzleAttempt($user, $puzzle, $data['success'], $data['timeSpentSeconds']);
         $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
 
+        // Maintained on every puzzle (not just "My Games" ones) so the
+        // counters stay a simple, unconditional fact about the puzzle — the
+        // delivery bandit's "most_failed" arm is the only current reader,
+        // and it only ever looks at a user's own pool anyway.
+        $puzzle->recordAttempt($data['success']);
+
         // Same update, once per fixed category this puzzle's themes map to — a
         // puzzle tagged ["fork","mateIn2"] moves both Fork and Checkmate
         // independently of each other and of the overall rating above. This is
@@ -108,6 +114,11 @@ class PuzzleAttemptController
             'success' => $attempt->isSuccess(),
             'timeSpentSeconds' => $attempt->getTimeSpentSeconds(),
             'createdAt' => $attempt->getCreatedAt()->format(DATE_ATOM),
+            // Puzzle::$owner is null for the shared Lichess pool, non-null for
+            // a "My Games" chess.com-derived puzzle — see Puzzle's class doc.
+            // /stats splits its history table on this rather than lumping
+            // both puzzle sources into one list.
+            'isPersonal' => null !== $attempt->getPuzzle()->getOwner(),
         ];
     }
 }

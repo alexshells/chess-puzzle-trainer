@@ -35,6 +35,7 @@ class PoolPuzzle:
     forced: bool | None
     setup_swing_cp: int | None
     quality_score: float | None
+    failed_attempt_count: int = 0
 
 
 def select_puzzle_for_arm(
@@ -64,6 +65,10 @@ def select_puzzle_for_arm(
         swung = [p for p in pool if p.setup_swing_cp is not None]
         if swung:
             return max(swung, key=lambda p: p.setup_swing_cp)
+    elif arm is DeliveryArm.MOST_FAILED:
+        failed = [p for p in pool if p.failed_attempt_count > 0]
+        if failed:
+            return max(failed, key=lambda p: p.failed_attempt_count)
 
     return _random_choice(pool, rng)
 
@@ -73,6 +78,9 @@ def _random_choice(pool: list[PoolPuzzle], rng: np.random.Generator) -> PoolPuzz
 
 
 def _load_pool(session: Session, user_id: int) -> list[PoolPuzzle]:
+    # Excludes discarded puzzles (owner rated it 1-2 stars) — mirrors
+    # backend's PuzzleRepository::findOneRandomForOwner/countForOwner, which
+    # apply the same exclusion for the non-bandit fallback path.
     rows = session.execute(
         select(
             puzzle_table.c.id,
@@ -80,7 +88,11 @@ def _load_pool(session: Session, user_id: int) -> list[PoolPuzzle]:
             puzzle_table.c.forced,
             puzzle_table.c.setup_swing_cp,
             puzzle_table.c.quality_score,
-        ).where(puzzle_table.c.owner_id == user_id)
+            puzzle_table.c.failed_attempt_count,
+        ).where(
+            puzzle_table.c.owner_id == user_id,
+            puzzle_table.c.discarded_at.is_(None),
+        )
     ).all()
     return [PoolPuzzle(*row) for row in rows]
 

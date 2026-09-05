@@ -37,6 +37,7 @@ class DeliveryArm(str, Enum):
     CLOSEST_RATING = "closest_rating"
     FORCED_CLEAN = "forced_clean"
     BIGGEST_BLUNDER = "biggest_blunder"
+    MOST_FAILED = "most_failed"
     RANDOM_BASELINE = "random_baseline"
 
 

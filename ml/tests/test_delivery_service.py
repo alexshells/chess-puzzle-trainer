@@ -74,6 +74,28 @@ def test_biggest_blunder_picks_the_largest_swing():
     assert chosen.id == 2
 
 
+def test_most_failed_picks_the_highest_failure_count():
+    pool = [
+        PoolPuzzle(id=1, rating=1500, forced=False, setup_swing_cp=100, quality_score=0.5, failed_attempt_count=1),
+        PoolPuzzle(id=2, rating=1500, forced=False, setup_swing_cp=100, quality_score=0.5, failed_attempt_count=6),
+        PoolPuzzle(id=3, rating=1500, forced=False, setup_swing_cp=100, quality_score=0.5, failed_attempt_count=0),
+    ]
+
+    chosen = select_puzzle_for_arm(DeliveryArm.MOST_FAILED, pool, user_rating=1500, rng=RNG)
+
+    assert chosen is not None
+    assert chosen.id == 2
+
+
+def test_most_failed_falls_back_to_random_when_nothing_has_failed_yet():
+    pool = [PoolPuzzle(id=1, rating=1500, forced=False, setup_swing_cp=100, quality_score=0.5, failed_attempt_count=0)]
+
+    chosen = select_puzzle_for_arm(DeliveryArm.MOST_FAILED, pool, user_rating=1500, rng=RNG)
+
+    assert chosen is not None
+    assert chosen.id == 1
+
+
 def test_random_baseline_returns_something_from_the_pool():
     pool = [
         PoolPuzzle(id=1, rating=1500, forced=False, setup_swing_cp=100, quality_score=0.5),

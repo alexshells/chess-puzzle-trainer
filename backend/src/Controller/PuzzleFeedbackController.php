@@ -24,6 +24,8 @@ class PuzzleFeedbackController
 {
     private const MIN_STARS = 1;
     private const MAX_STARS = 5;
+    /** A puzzle rated this or lower isn't worth serving again — see Puzzle::$discardedAt. */
+    private const DISCARD_AT_OR_BELOW_STARS = 2;
 
     public function __construct(
         private readonly Security $security,
@@ -56,6 +58,10 @@ class PuzzleFeedbackController
         } else {
             $feedback = new PuzzleFeedback($user, $puzzle, $stars);
         }
+
+        // Symmetric with the current rating, not a one-way ratchet — a
+        // puzzle re-rated higher later comes back into the pool.
+        $puzzle->setDiscardedAt($stars <= self::DISCARD_AT_OR_BELOW_STARS ? new \DateTimeImmutable() : null);
 
         $this->entityManager->persist($feedback);
         $this->entityManager->flush();

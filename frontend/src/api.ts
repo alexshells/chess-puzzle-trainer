@@ -105,6 +105,8 @@ export interface AttemptRecord {
   success: boolean
   timeSpentSeconds: number
   createdAt: string
+  /** True for a "My Games" chess.com-derived puzzle, false for the shared Lichess pool. */
+  isPersonal: boolean
 }
 
 export function fetchMyAttempts(token: string): Promise<AttemptRecord[]> {

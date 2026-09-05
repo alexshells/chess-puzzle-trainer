@@ -59,6 +59,14 @@ puzzle_table = Table(
     Column("forced", Boolean, nullable=True),
     Column("setup_swing_cp", Integer, nullable=True),
     Column("quality_score", Float, nullable=True),
+    # Set when the owner rates a personal puzzle 1-2 stars (see
+    # Puzzle::$discardedAt) — excludes it from the delivery bandit's pool
+    # query (delivery_service.py) without needing to delete the row.
+    Column("discarded_at", DateTime, nullable=True),
+    # Maintained by backend's PuzzleAttemptController at write time. Read by
+    # the delivery bandit's "most_failed" arm.
+    Column("attempt_count", Integer, nullable=False),
+    Column("failed_attempt_count", Integer, nullable=False),
 )
 
 puzzle_attempt_table = Table(

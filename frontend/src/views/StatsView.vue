@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { fetchMyAttempts, fetchCategoryRatings, type AttemptRecord, type CategoryRating } from '../api'
 import { session } from '../session'
 import RadarChart from '../components/RadarChart.vue'
+import AttemptHistoryTable from '../components/AttemptHistoryTable.vue'
 
 const attempts = ref<AttemptRecord[]>([])
 const categoryRatings = ref<CategoryRating[]>([])
 const error = ref('')
 const loading = ref(false)
+
+// Two different puzzle sources (see Puzzle::$owner) — a personal puzzle
+// never carries a category rating change, so keeping them in one table
+// made the "why does this row do nothing on /stats's radar chart" question
+// unanswerable at a glance.
+const personalAttempts = computed(() => attempts.value.filter((a) => a.isPersonal))
+const lichessAttempts = computed(() => attempts.value.filter((a) => !a.isPersonal))
 
 async function load() {
   if (!session.value) {
@@ -32,10 +40,6 @@ async function load() {
 }
 
 watch(session, load, { immediate: true })
-
-function formatTime(createdAt: string): string {
-  return new Date(createdAt).toLocaleString()
-}
 </script>
 
 <template>
@@ -51,30 +55,19 @@ function formatTime(createdAt: string): string {
       </section>
 
       <section>
-        <h2>Puzzle history</h2>
-        <p v-if="attempts.length === 0" class="counter">No attempts recorded yet — go solve a puzzle.</p>
-        <table v-else>
-          <thead>
-            <tr>
-              <th>Puzzle</th>
-              <th>Rating</th>
-              <th>Result</th>
-              <th>Time</th>
-              <th>When</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="attempt in attempts" :key="attempt.id">
-              <td>#{{ attempt.puzzleId }}</td>
-              <td>{{ attempt.puzzleRating }}</td>
-              <td :class="attempt.success ? 'success' : 'failure'">
-                {{ attempt.success ? 'Solved' : 'Missed' }}
-              </td>
-              <td>{{ attempt.timeSpentSeconds }}s</td>
-              <td>{{ formatTime(attempt.createdAt) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <h2>Lichess puzzle history</h2>
+        <AttemptHistoryTable
+          :attempts="lichessAttempts"
+          empty-message="No Lichess puzzle attempts recorded yet — go solve a puzzle."
+        />
+      </section>
+
+      <section>
+        <h2>My Games puzzle history</h2>
+        <AttemptHistoryTable
+          :attempts="personalAttempts"
+          empty-message="No My Games attempts recorded yet — import your chess.com games to get started."
+        />
       </section>
     </template>
   </div>
@@ -93,18 +86,4 @@ h2 {
   margin: 0 0 1rem;
   text-align: left;
 }
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-th, td {
-  padding: 0.4rem 0.6rem;
-  text-align: left;
-  border-bottom: 1px solid #47423a;
-}
-th { color: #b8985a; font-weight: 600; }
-td.success { color: #9dc98a; }
-td.failure { color: #d98c8c; }
 </style>

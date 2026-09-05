@@ -439,11 +439,13 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   - **Arms are puzzle-selection *policies*, not individual puzzles** — a
     personal puzzle is served to one user essentially once, so there's no
     repeated-pull history to learn at the level of a single puzzle the way
-    classic bandit algorithms assume. `DeliveryArm` has five: `best_quality`,
-    `closest_rating`, `forced_clean`, `biggest_blunder`, and
-    `random_baseline` (a deliberate "do nothing clever" control — without
-    it there'd be no way to tell whether the other four are actually
-    earning their keep). Each pull is genuinely one of these five policies,
+    classic bandit algorithms assume. `DeliveryArm` has six: `best_quality`,
+    `closest_rating`, `forced_clean`, `biggest_blunder`, `most_failed`
+    (added alongside the puzzle-lifecycle work below — biases toward a
+    puzzle the owner has kept getting wrong, reading `Puzzle.failedAttemptCount`),
+    and `random_baseline` (a deliberate "do nothing clever" control —
+    without it there'd be no way to tell whether the others are actually
+    earning their keep). Each pull is genuinely one of these six policies,
     pulled across every delivery for every user, which is what actually
     lets Thompson Sampling converge.
   - **Contextual via Bayesian linear regression, not a plain per-arm
@@ -488,6 +490,40 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     classifiers and the bandit alike; blending our own `puzzle_feedback`
     into `puzzle_quality_model`'s training data as it accumulates, since
     right now that model only ever trains on Lichess's `Popularity`.
+- Phase 2.7 (built): **puzzle lifecycle** — a personal puzzle now carries
+  `discardedAt`/`attemptCount`/`failedAttemptCount` (`Puzzle` entity), and
+  `/stats`'s history table is split into separate My Games / Lichess
+  sections instead of one undifferentiated list.
+  - **`discardedAt` is a soft exclude, not a delete** — rating a "My Games"
+    puzzle 1-2 stars (`PuzzleFeedbackController::submit()`) sets it;
+    re-rating 3+ clears it again (symmetric, not a one-way ratchet). A real
+    `DELETE` isn't an option here: `PuzzleFeedback` and `PuzzleAttempt` both
+    hold non-nullable FKs into `puzzle`, so deleting a rated/attempted
+    puzzle would either fail on the constraint or take the owner's own
+    history down with it — exactly what this feature is trying to keep
+    intact. `PuzzleRepository::findOneRandomForOwner()`/`countForOwner()`
+    and ml/'s bandit pool (`delivery_service._load_pool()`) both filter it
+    out; `/stats`'s history and `/api/me/category-ratings` never do, since
+    discard is about future delivery, not about the past.
+  - **`attemptCount`/`failedAttemptCount` are maintained at write time**
+    (`Puzzle::recordAttempt()`, called from `PuzzleAttemptController::create()`
+    on every attempt, any puzzle) rather than always recomputed from
+    `PuzzleAttempt` — same bias as `UserCategoryRating`. `failedAttemptCount`
+    is what the new `most_failed` bandit arm reads (see Phase 2.6 above) to
+    bias toward a puzzle the owner keeps missing, on the theory that a
+    puzzle drawing repeat failures is either genuinely load-bearing practice
+    or a candidate for a future rating that discards it — either way worth
+    surfacing rather than letting it sit unseen in the pool.
+  - **History split is a puzzle-source distinction, not a UI filter toggle**
+    — `PuzzleAttemptController::serializeAttempt()` adds `isPersonal`
+    (`null !== $attempt->getPuzzle()->getOwner()`); `StatsView.vue` filters
+    the one `/api/me/attempts` response into two `AttemptHistoryTable`
+    instances client-side rather than adding a second endpoint, since the
+    full list was already being fetched anyway. Worth remembering *why*
+    they're separate: a personal puzzle's `themes` is `null` (see Phase 2),
+    so it never moves a category rating — folding it into one table made
+    "why did solving this do nothing on the radar chart" unanswerable at a
+    glance.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness

@@ -126,6 +126,7 @@ class PuzzleRepository extends ServiceEntityRepository
     }
 
     /** Uniform-random pick among this user's own "My Games" chess.com-derived puzzles, or null if they have none. */
+    /** Excludes discarded puzzles (Puzzle::$discardedAt) — a 1-2 star rating means "don't serve this again", not "delete it". */
     public function findOneRandomForOwner(User $user): ?Puzzle
     {
         $count = $this->countForOwner($user);
@@ -135,6 +136,7 @@ class PuzzleRepository extends ServiceEntityRepository
 
         return $this->createQueryBuilder('p')
             ->where('p.owner = :owner')
+            ->andWhere('p.discardedAt IS NULL')
             ->setParameter('owner', $user)
             ->setFirstResult(random_int(0, $count - 1))
             ->setMaxResults(1)
@@ -142,11 +144,13 @@ class PuzzleRepository extends ServiceEntityRepository
             ->getOneOrNullResult();
     }
 
+    /** Excludes discarded puzzles — this is "how many can you actually be served", the same set findOneRandomForOwner draws from. */
     public function countForOwner(User $user): int
     {
         return (int) $this->createQueryBuilder('p')
             ->select('COUNT(p.id)')
             ->where('p.owner = :owner')
+            ->andWhere('p.discardedAt IS NULL')
             ->setParameter('owner', $user)
             ->getQuery()
             ->getSingleScalarResult();

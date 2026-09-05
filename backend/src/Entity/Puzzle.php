@@ -68,6 +68,27 @@ class Puzzle
     #[ORM\Column(nullable: true)]
     private ?float $qualityScore = null;
 
+    /**
+     * Set when a puzzle's owner rates it 1-2 stars (PuzzleFeedbackController)
+     * — excludes it from future delivery (PuzzleRepository, ml/'s delivery
+     * bandit) without deleting the row, since PuzzleFeedback/PuzzleAttempt
+     * both have non-nullable FKs into this table and a real delete would
+     * either fail outright or take the owner's own history down with it.
+     * Cleared again if they later re-rate it 3+ stars — this tracks "should
+     * this still be served" as an ongoing fact about the current rating,
+     * not a one-way ratchet.
+     */
+    #[ORM\Column(nullable: true)]
+    private ?\DateTimeImmutable $discardedAt = null;
+
+    /** Every PuzzleAttempt ever recorded against this puzzle, incremented at write time (PuzzleAttemptController) rather than always recomputed. */
+    #[ORM\Column]
+    private int $attemptCount = 0;
+
+    /** Subset of attemptCount where success=false — what the delivery bandit's "most_failed" arm reads to favor puzzles the owner keeps missing. */
+    #[ORM\Column]
+    private int $failedAttemptCount = 0;
+
     public function getId(): ?int
     {
         return $this->id;
@@ -189,6 +210,38 @@ class Puzzle
     public function setQualityScore(?float $qualityScore): static
     {
         $this->qualityScore = $qualityScore;
+
+        return $this;
+    }
+
+    public function getDiscardedAt(): ?\DateTimeImmutable
+    {
+        return $this->discardedAt;
+    }
+
+    public function setDiscardedAt(?\DateTimeImmutable $discardedAt): static
+    {
+        $this->discardedAt = $discardedAt;
+
+        return $this;
+    }
+
+    public function getAttemptCount(): int
+    {
+        return $this->attemptCount;
+    }
+
+    public function getFailedAttemptCount(): int
+    {
+        return $this->failedAttemptCount;
+    }
+
+    public function recordAttempt(bool $success): static
+    {
+        ++$this->attemptCount;
+        if (!$success) {
+            ++$this->failedAttemptCount;
+        }
 
         return $this;
     }
