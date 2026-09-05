@@ -3,6 +3,7 @@
 namespace App\Repository;
 
 use App\Entity\Puzzle;
+use App\Entity\User;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
 
@@ -122,6 +123,33 @@ class PuzzleRepository extends ServiceEntityRepository
         ));
 
         return [] === $matches ? null : $matches[array_rand($matches)];
+    }
+
+    /** Uniform-random pick among this user's own "My Games" chess.com-derived puzzles, or null if they have none. */
+    public function findOneRandomForOwner(User $user): ?Puzzle
+    {
+        $count = $this->countForOwner($user);
+        if (0 === $count) {
+            return null;
+        }
+
+        return $this->createQueryBuilder('p')
+            ->where('p.owner = :owner')
+            ->setParameter('owner', $user)
+            ->setFirstResult(random_int(0, $count - 1))
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
+
+    public function countForOwner(User $user): int
+    {
+        return (int) $this->createQueryBuilder('p')
+            ->select('COUNT(p.id)')
+            ->where('p.owner = :owner')
+            ->setParameter('owner', $user)
+            ->getQuery()
+            ->getSingleScalarResult();
     }
 
     /** Deterministic fallback for when no puzzle falls within any reasonable band — the single closest rating. */

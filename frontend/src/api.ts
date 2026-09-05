@@ -159,3 +159,23 @@ export function acceptFriendRequest(friendshipId: number, token: string): Promis
 export function removeFriendship(friendshipId: number, token: string): Promise<void> {
   return request(`/api/friends/${friendshipId}`, token, { method: 'DELETE' })
 }
+
+export interface GameImportStatus {
+  status: 'idle' | 'running' | 'done' | 'error'
+  gamesProcessed: number
+  puzzlesFound: number
+  errorMessage: string | null
+  chessComUsername: string | null
+}
+
+export function startGameImport(chessComUsername: string, token: string): Promise<GameImportStatus> {
+  return postJson('/api/me/game-import', { chessComUsername }, token)
+}
+
+export function fetchGameImportStatus(token: string): Promise<GameImportStatus> {
+  return request('/api/me/game-import/status', token)
+}
+
+export function fetchPersonalPuzzle(token: string): Promise<Puzzle> {
+  return request('/api/puzzles/personal/random', token)
+}

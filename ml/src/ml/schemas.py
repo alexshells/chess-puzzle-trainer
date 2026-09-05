@@ -13,3 +13,25 @@ class RecommendationResponse(BaseModel):
     # to plain rating-band selection in that case.
     biasedThemes: list[str]
     weaknesses: list[ThemeWeaknessOut]
+
+
+class GameImportStartRequest(BaseModel):
+    chessComUsername: str
+
+
+class GameImportCandidateOut(BaseModel):
+    fen: str
+    solution: list[str]
+    rating: int
+    externalId: str
+
+
+class GameImportStatusResponse(BaseModel):
+    status: str  # idle / running / done / error
+    gamesProcessed: int
+    puzzlesFound: int
+    newCandidates: list[GameImportCandidateOut]
+    errorMessage: str | None = None
+    # So the frontend can resume/retry without the user re-typing it — e.g.
+    # "Import more" after a fresh page load, with no in-memory form state.
+    chessComUsername: str | None = None

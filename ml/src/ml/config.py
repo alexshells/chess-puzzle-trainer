@@ -17,6 +17,18 @@ class Settings(BaseSettings):
 
     port: int = 8001
 
+    # "My Games" (chess.com blunder import) settings — see game_import.py.
+    # stockfish_path defaults to relying on $PATH (true in the production
+    # container, which apt-installs the `stockfish` package); local dev on
+    # a machine without it on PATH can override via .env.
+    stockfish_path: str = "stockfish"
+    max_games_per_run: int = 50
+    stockfish_depth: int = 12
+    blunder_threshold_cp: int = 250
+    # Skip blunders piled onto an already-decided position — not an
+    # interesting puzzle if one side was already winning/losing by this much.
+    decided_position_cp: int = 600
+
     @property
     def resolved_database_url(self) -> str:
         prefix = "sqlite:///"

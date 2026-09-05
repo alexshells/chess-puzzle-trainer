@@ -79,3 +79,50 @@ class UserPatternWeakness(Base):
     miss_rate_vs_expected = Column(Float, nullable=False)
     sample_size = Column(Integer, nullable=False)
     computed_at = Column(DateTime, nullable=False)
+
+
+class GameImportProgress(Base):
+    """
+    One row per user — tracks where a "My Games" chess.com import scan has
+    gotten to, so a second `start` call resumes instead of re-scanning from
+    scratch (see game_import.py). ml/-owned, same boundary as above: backend
+    never queries this directly, only through ml/'s HTTP endpoints.
+    """
+
+    __tablename__ = "game_import_progress"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, unique=True, index=True)
+    chess_com_username = Column(String(255), nullable=False)
+    status = Column(String(16), nullable=False, default="idle")
+    games_processed = Column(Integer, nullable=False, default=0)
+    puzzles_found = Column(Integer, nullable=False, default=0)
+    # e.g. "2026/08" — the oldest archive month scanned so far, so a resumed
+    # run continues further back rather than re-scanning recent months.
+    last_archive = Column(String(16), nullable=True)
+    error_message = Column(Text, nullable=True)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class PersonalPuzzleCandidate(Base):
+    """
+    A blunder-derived puzzle found by a "My Games" scan, waiting for
+    backend/ to pick it up and persist it as a real `Puzzle` row (ml/ never
+    writes to `puzzle` itself — see this module's docstring). `delivered`
+    flips true once a status poll has returned it; backend's own dedup by
+    `external_id` is the final safety net against double-inserting on
+    at-least-once delivery.
+    """
+
+    __tablename__ = "personal_puzzle_candidate"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    fen = Column(String(100), nullable=False)
+    # JSON-encoded array of UCI moves, same shape/convention as Puzzle.solution.
+    solution = Column(Text, nullable=False)
+    rating = Column(Integer, nullable=False)
+    # e.g. "chesscom:{game_id}:{ply}" — backend's dedup key.
+    external_id = Column(String(255), nullable=False, unique=True)
+    delivered = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False)

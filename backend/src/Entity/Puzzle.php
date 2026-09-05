@@ -31,6 +31,25 @@ class Puzzle
     #[ORM\Column(nullable: true)]
     private ?array $themes = null;
 
+    /**
+     * Null for the shared Lichess pool (the vast majority of rows). Non-null
+     * marks a "My Games" puzzle generated from this specific user's own
+     * chess.com blunders — servable only to them, never through the normal
+     * rating/weakness/random selection paths.
+     */
+    #[ORM\ManyToOne]
+    #[ORM\JoinColumn(nullable: true)]
+    private ?User $owner = null;
+
+    /**
+     * Dedup key for non-Lichess imports, e.g. "chesscom:{gameId}:{ply}" —
+     * deliberately separate from lichessId, which stays scoped to meaning
+     * "this came from the Lichess import" rather than being overloaded into
+     * a generic external-source id.
+     */
+    #[ORM\Column(length: 255, unique: true, nullable: true)]
+    private ?string $externalId = null;
+
     public function getId(): ?int
     {
         return $this->id;
@@ -92,6 +111,30 @@ class Puzzle
     public function setThemes(?array $themes): static
     {
         $this->themes = $themes;
+
+        return $this;
+    }
+
+    public function getOwner(): ?User
+    {
+        return $this->owner;
+    }
+
+    public function setOwner(?User $owner): static
+    {
+        $this->owner = $owner;
+
+        return $this;
+    }
+
+    public function getExternalId(): ?string
+    {
+        return $this->externalId;
+    }
+
+    public function setExternalId(?string $externalId): static
+    {
+        $this->externalId = $externalId;
 
         return $this;
     }
