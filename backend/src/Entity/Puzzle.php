@@ -50,6 +50,24 @@ class Puzzle
     #[ORM\Column(length: 255, unique: true, nullable: true)]
     private ?string $externalId = null;
 
+    /**
+     * Puzzle-quality signals from ml/'s puzzle_quality.py analysis, relayed
+     * through the same candidate payload as `rating` (see
+     * GameImportController) — null for the shared Lichess pool, which never
+     * goes through that analysis. Read by ml/'s delivery bandit (via
+     * external_metadata) to implement its "forced/clean" and "biggest
+     * blunder" arms; not otherwise used or shown anywhere yet.
+     */
+    #[ORM\Column(nullable: true)]
+    private ?bool $forced = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?int $setupSwingCp = null;
+
+    /** puzzle_quality_model's predicted P(relatively popular), 0-1 — read by the delivery bandit's "best quality" arm. */
+    #[ORM\Column(nullable: true)]
+    private ?float $qualityScore = null;
+
     public function getId(): ?int
     {
         return $this->id;
@@ -135,6 +153,42 @@ class Puzzle
     public function setExternalId(?string $externalId): static
     {
         $this->externalId = $externalId;
+
+        return $this;
+    }
+
+    public function isForced(): ?bool
+    {
+        return $this->forced;
+    }
+
+    public function setForced(?bool $forced): static
+    {
+        $this->forced = $forced;
+
+        return $this;
+    }
+
+    public function getSetupSwingCp(): ?int
+    {
+        return $this->setupSwingCp;
+    }
+
+    public function setSetupSwingCp(?int $setupSwingCp): static
+    {
+        $this->setupSwingCp = $setupSwingCp;
+
+        return $this;
+    }
+
+    public function getQualityScore(): ?float
+    {
+        return $this->qualityScore;
+    }
+
+    public function setQualityScore(?float $qualityScore): static
+    {
+        $this->qualityScore = $qualityScore;
 
         return $this;
     }

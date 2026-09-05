@@ -77,7 +77,12 @@ class GameImportController
         ]);
     }
 
-    /** @param array<int, array{fen: string, solution: string[], rating: int, externalId: string}> $candidates */
+    /**
+     * @param array<int, array{
+     *     fen: string, solution: string[], rating: int, externalId: string,
+     *     forced: bool, setupSwingCp: int, qualityScore: ?float,
+     * }> $candidates
+     */
     private function persistNewCandidates(User $user, array $candidates): void
     {
         foreach ($candidates as $candidate) {
@@ -92,6 +97,9 @@ class GameImportController
             $puzzle->setRating($candidate['rating']);
             $puzzle->setExternalId($candidate['externalId']);
             $puzzle->setOwner($user);
+            $puzzle->setForced($candidate['forced']);
+            $puzzle->setSetupSwingCp($candidate['setupSwingCp']);
+            $puzzle->setQualityScore($candidate['qualityScore']);
             $this->entityManager->persist($puzzle);
         }
 
