@@ -86,8 +86,19 @@ def train(X: np.ndarray, popularity: np.ndarray, *, test_size: float, seed: int)
     return pipeline, report
 
 
-def load(path: Path) -> Pipeline:
+def load(path: Path = _DEFAULT_MODEL_PATH) -> Pipeline:
     return joblib.load(path)
+
+
+def try_load(path: Path = _DEFAULT_MODEL_PATH) -> Pipeline | None:
+    """
+    Like load(), but returns None instead of raising when no trained model
+    exists at this path — the caller's signal to skip quality scoring
+    (see game_import.py) rather than a live-import-breaking crash.
+    """
+    if not path.exists():
+        return None
+    return load(path)
 
 
 def predict(model: Pipeline, analysis: PuzzleQualityAnalysis, rating: int) -> float:

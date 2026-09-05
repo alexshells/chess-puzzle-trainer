@@ -148,6 +148,10 @@ class PersonalPuzzleCandidate(Base):
     forced = Column(Boolean, nullable=True)
     refutation_gap_cp = Column(Integer, nullable=True)
     setup_swing_cp = Column(Integer, nullable=True)
+    # puzzle_quality_model's predicted P(relatively popular), 0-1. Nullable
+    # because candidates found before puzzle_quality_model was wired into
+    # generation (or with no trained model file present) have no value.
+    quality_score = Column(Float, nullable=True)
     delivered = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False)
 

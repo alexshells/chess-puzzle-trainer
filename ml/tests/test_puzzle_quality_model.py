@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 
 from ml.puzzle_quality import PuzzleQualityAnalysis
-from ml.puzzle_quality_model import build_feature_matrix, extract_popularity, predict, train
+from ml.puzzle_quality_model import build_feature_matrix, extract_popularity, predict, train, try_load
 
 
 class FakeExample:
@@ -78,3 +80,7 @@ def test_predict_returns_a_probability_using_the_trained_pipeline():
 
     assert 0.0 <= probability <= 1.0
     assert probability > 0.5
+
+
+def test_try_load_returns_none_when_no_model_file_exists(tmp_path: Path):
+    assert try_load(tmp_path / "does-not-exist.joblib") is None

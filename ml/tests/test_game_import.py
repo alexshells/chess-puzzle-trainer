@@ -73,6 +73,16 @@ class FakeRatingModel:
         return np.array([self._rating])
 
 
+class FakeQualityModel:
+    """Mimics the sklearn Pipeline interface puzzle_quality_model.predict() calls — model.predict_proba(X)[0, 1]."""
+
+    def __init__(self, probability: float):
+        self._probability = probability
+
+    def predict_proba(self, X) -> np.ndarray:
+        return np.array([[1 - self._probability, self._probability]])
+
+
 def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     # White's move 2 (Nf3): small drop, below threshold — not a blunder.
     # White's move 3 (Bxc6): puzzle-position eval drops from +15 to -300, a
@@ -282,6 +292,65 @@ def test_uses_the_rating_model_when_given_instead_of_player_rating():
     assert len(candidates) == 1
     # Rounded model output, not player_rating (1200) — the model was provided.
     assert candidates[0].rating == 1838
+
+
+def test_computes_quality_score_when_a_quality_model_is_given():
+    engine = FakeEngine(
+        [
+            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
+            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
+            (10, [_PV_MOVE]),  # after Nf3
+            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
+            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # puzzle position before Bxc6
+            (-300, [_PV_MOVE]),  # after Bxc6
+        ]
+    )
+
+    candidates = find_blunders(
+        GAME_PGN,
+        TARGET,
+        player_rating=1200,
+        game_id="test-game",
+        engine=engine,
+        depth=1,
+        blunder_threshold_cp=250,
+        decided_position_cp=600,
+        forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
+        quality_model=FakeQualityModel(0.73),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].quality_score == 0.73
+
+
+def test_quality_score_is_none_when_no_quality_model_is_given():
+    engine = FakeEngine(
+        [
+            (999, [_PV_MOVE]),
+            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],
+            (10, [_PV_MOVE]),
+            (200, [_PV_MOVE]),
+            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = find_blunders(
+        GAME_PGN,
+        TARGET,
+        player_rating=1200,
+        game_id="test-game",
+        engine=engine,
+        depth=1,
+        blunder_threshold_cp=250,
+        decided_position_cp=600,
+        forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].quality_score is None
 
 
 def test_ignores_games_the_target_did_not_play_in():

@@ -34,6 +34,8 @@ from sqlalchemy.orm import Session
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, SessionLocal
 from ml.puzzle_quality import analyse_puzzle_quality
+from ml.puzzle_quality_model import predict as predict_quality
+from ml.puzzle_quality_model import try_load as try_load_quality_model
 from ml.puzzle_rating_model import predict as predict_rating
 from ml.puzzle_rating_model import try_load as try_load_rating_model
 
@@ -63,6 +65,9 @@ class BlunderCandidate:
     forced: bool
     refutation_gap_cp: int | None
     setup_swing_cp: int
+    # puzzle_quality_model's predicted P(relatively popular), 0-1 — None
+    # when no trained quality model file is available (see try_load()).
+    quality_score: float | None
 
 
 def fetch_archive_urls(username: str) -> list[str]:
@@ -92,6 +97,7 @@ def find_blunders(
     forced_gap_cp: int,
     max_solver_moves: int,
     rating_model: Pipeline | None = None,
+    quality_model: Pipeline | None = None,
 ) -> list[BlunderCandidate]:
     """
     Walks one game, evaluating the position before and after every move the
@@ -163,12 +169,16 @@ def find_blunders(
                         if rating_model is not None
                         else player_rating
                     )
+                    quality_score = (
+                        predict_quality(quality_model, analysis, rating) if quality_model is not None else None
+                    )
                     candidates.append(
                         BlunderCandidate(
                             fen=fen_before_last_move,
                             solution=solution,
                             external_id=f"chesscom:{game_id}:{ply}",
                             rating=rating,
+                            quality_score=quality_score,
                             forced=analysis.forced,
                             refutation_gap_cp=analysis.refutation_gap_cp,
                             setup_swing_cp=analysis.setup_swing_cp,
@@ -235,6 +245,10 @@ def run_import(user_id: int, chess_com_username: str) -> None:
         if rating_model is None:
             logger.warning("No trained puzzle-rating model found — falling back to the player's own chess.com rating.")
 
+        quality_model = try_load_quality_model()
+        if quality_model is None:
+            logger.warning("No trained puzzle-quality model found — candidates will have no quality_score.")
+
         try:
             archive_urls = fetch_archive_urls(chess_com_username)
         except httpx.HTTPError as exc:
@@ -262,7 +276,7 @@ def run_import(user_id: int, chess_com_username: str) -> None:
                     if games_this_run >= settings.max_games_per_run:
                         break
 
-                    _process_one_game(session, progress, game, chess_com_username, engine, rating_model)
+                    _process_one_game(session, progress, game, chess_com_username, engine, rating_model, quality_model)
                     games_this_run += 1
 
                 progress.last_archive = _archive_month(archive_url)
@@ -311,6 +325,7 @@ def _process_one_game(
     chess_com_username: str,
     engine: chess.engine.SimpleEngine,
     rating_model: Pipeline | None,
+    quality_model: Pipeline | None,
 ) -> None:
     white_username = game["white"]["username"]
     is_white = white_username.lower() == chess_com_username.lower()
@@ -328,6 +343,7 @@ def _process_one_game(
         forced_gap_cp=settings.forced_gap_cp,
         max_solver_moves=settings.max_solver_moves,
         rating_model=rating_model,
+        quality_model=quality_model,
     )
 
     for candidate in candidates:
@@ -346,6 +362,7 @@ def _process_one_game(
                 forced=candidate.forced,
                 refutation_gap_cp=candidate.refutation_gap_cp,
                 setup_swing_cp=candidate.setup_swing_cp,
+                quality_score=candidate.quality_score,
                 delivered=False,
                 created_at=datetime.now(timezone.utc),
             )
