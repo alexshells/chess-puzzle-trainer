@@ -40,6 +40,15 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface, Rateabl
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE, nullable: true)]
     private ?\DateTimeImmutable $ratingUpdatedAt = null;
 
+    /**
+     * The linked chess.com account "My Games" imports from — null until the
+     * user links one via ChessComLinkController. Validated against chess.com's
+     * public profile API before being set, so this is never a username that
+     * doesn't exist there.
+     */
+    #[ORM\Column(length: 50, nullable: true)]
+    private ?string $chessComUsername = null;
+
     public function __construct()
     {
         $this->createdAt = new \DateTimeImmutable();
@@ -93,6 +102,18 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface, Rateabl
         $this->ratingDeviation = $ratingDeviation;
         $this->volatility = $volatility;
         $this->ratingUpdatedAt = new \DateTimeImmutable();
+
+        return $this;
+    }
+
+    public function getChessComUsername(): ?string
+    {
+        return $this->chessComUsername;
+    }
+
+    public function setChessComUsername(?string $chessComUsername): static
+    {
+        $this->chessComUsername = $chessComUsername;
 
         return $this;
     }

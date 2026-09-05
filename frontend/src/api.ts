@@ -168,12 +168,29 @@ export interface GameImportStatus {
   chessComUsername: string | null
 }
 
-export function startGameImport(chessComUsername: string, token: string): Promise<GameImportStatus> {
-  return postJson('/api/me/game-import', { chessComUsername }, token)
+/** No username to pass anymore — the backend reads it from the linked account (see ChessComLink below). */
+export function startGameImport(token: string): Promise<GameImportStatus> {
+  return postJson('/api/me/game-import', {}, token)
 }
 
 export function fetchGameImportStatus(token: string): Promise<GameImportStatus> {
   return request('/api/me/game-import/status', token)
+}
+
+export interface ChessComLink {
+  chessComUsername: string | null
+}
+
+export function fetchChessComLink(token: string): Promise<ChessComLink> {
+  return request('/api/me/chess-com-link', token)
+}
+
+export function linkChessComAccount(username: string, token: string): Promise<ChessComLink> {
+  return postJson('/api/me/chess-com-link', { chessComUsername: username }, token)
+}
+
+export function unlinkChessComAccount(token: string): Promise<ChessComLink> {
+  return request('/api/me/chess-com-link', token, { method: 'DELETE' })
 }
 
 export function fetchPersonalPuzzle(token: string): Promise<Puzzle> {

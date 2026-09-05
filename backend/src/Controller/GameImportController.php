@@ -9,7 +9,6 @@ use App\Service\MlGameImportClient;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
 /**
@@ -31,17 +30,15 @@ class GameImportController
     }
 
     #[Route('/api/me/game-import', methods: ['POST'])]
-    public function start(Request $request): JsonResponse
+    public function start(): JsonResponse
     {
-        $data = json_decode($request->getContent(), true) ?? [];
-        $username = trim((string) ($data['chessComUsername'] ?? ''));
-
-        if ('' === $username) {
-            return new JsonResponse(['error' => '"chessComUsername" is required'], 400);
-        }
-
         /** @var User $user */
         $user = $this->security->getUser();
+
+        $username = $user->getChessComUsername();
+        if (null === $username) {
+            return new JsonResponse(['error' => 'Link a chess.com account first'], 400);
+        }
 
         $status = $this->mlGameImportClient->startImport($user, $username);
 

@@ -7,11 +7,19 @@ import {
   fetchPersonalPuzzle,
   recordAttempt,
   submitPuzzleFeedback,
+  fetchChessComLink,
+  linkChessComAccount,
+  unlinkChessComAccount,
   type GameImportStatus,
 } from '../api'
 import { session } from '../session'
 
-const username = ref('')
+// undefined = still loading; null = confirmed not linked yet.
+const linkedUsername = ref<string | null | undefined>(undefined)
+const linkInput = ref('')
+const linking = ref(false)
+const linkError = ref<string | null>(null)
+
 const status = ref<GameImportStatus | null>(null)
 const starting = ref(false)
 
@@ -37,18 +45,37 @@ function deltaClass(n: number): string {
   return n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'
 }
 
+async function loadLink() {
+  if (!session.value) return
+  const result = await fetchChessComLink(session.value.token)
+  linkedUsername.value = result.chessComUsername
+}
+
+async function linkAccount() {
+  if (!session.value || !linkInput.value.trim()) return
+  linking.value = true
+  linkError.value = null
+  try {
+    const result = await linkChessComAccount(linkInput.value.trim(), session.value.token)
+    linkedUsername.value = result.chessComUsername
+    linkInput.value = ''
+  } catch (err) {
+    linkError.value = err instanceof Error ? err.message : 'Failed to link account'
+  } finally {
+    linking.value = false
+  }
+}
+
+async function unlinkAccount() {
+  if (!session.value) return
+  await unlinkChessComAccount(session.value.token)
+  linkedUsername.value = null
+}
+
 async function refreshStatus() {
   if (!session.value) return
   const previousCount = status.value?.puzzlesFound ?? 0
   status.value = await fetchGameImportStatus(session.value.token)
-
-  // Keeps the input pre-filled and, more importantly, gives "Import more"
-  // something to submit even after a fresh page load, when this component's
-  // own `username` ref never got typed into — the only durable record of
-  // which username is being scanned lives in ml/'s progress row.
-  if (status.value.chessComUsername) {
-    username.value = status.value.chessComUsername
-  }
 
   // First puzzle(s) just became available — load one so the board appears
   // right away instead of waiting for the user to notice and act.
@@ -65,10 +92,10 @@ async function refreshStatus() {
 }
 
 async function startImport() {
-  if (!session.value || !username.value.trim()) return
+  if (!session.value) return
   starting.value = true
   try {
-    status.value = await startGameImport(username.value.trim(), session.value.token)
+    status.value = await startGameImport(session.value.token)
     if (!pollHandle) pollHandle = setInterval(refreshStatus, 4000)
   } finally {
     starting.value = false
@@ -124,7 +151,10 @@ function giveFeedback(thumbsUp: boolean) {
   })
 }
 
-onMounted(refreshStatus)
+onMounted(() => {
+  loadLink()
+  refreshStatus()
+})
 onUnmounted(() => {
   if (pollHandle) clearInterval(pollHandle)
 })
@@ -135,50 +165,68 @@ onUnmounted(() => {
     <p v-if="!session" class="counter">Sign in to import your chess.com games.</p>
 
     <template v-else>
-      <form v-if="!status || status.status === 'idle'" class="import-form" @submit.prevent="startImport">
-        <input v-model="username" type="text" placeholder="chess.com username" required />
-        <button type="submit" :disabled="starting">{{ starting ? 'Starting…' : 'Import games' }}</button>
-      </form>
+      <template v-if="linkedUsername === undefined">
+        <p class="counter">Loading…</p>
+      </template>
 
-      <div v-else class="progress">
-        <p v-if="status.status === 'running'" class="counter">
-          Analyzed {{ status.gamesProcessed }} games — {{ status.puzzlesFound }} puzzles found so far…
-        </p>
-        <p v-else-if="status.status === 'done'" class="counter">
-          Done — analyzed {{ status.gamesProcessed }} games, {{ status.puzzlesFound }} puzzles found.
-          <button class="link" @click="startImport">Import more</button>
-        </p>
-        <p v-else-if="status.status === 'error'" class="counter error">
-          {{ status.errorMessage ?? 'Something went wrong.' }}
-          <button class="link" @click="startImport">Retry</button>
-        </p>
-      </div>
+      <template v-else-if="linkedUsername === null">
+        <form class="import-form" @submit.prevent="linkAccount">
+          <input v-model="linkInput" type="text" placeholder="chess.com username" required />
+          <button type="submit" :disabled="linking">{{ linking ? 'Linking…' : 'Link account' }}</button>
+        </form>
+        <p v-if="linkError" class="counter error">{{ linkError }}</p>
+      </template>
 
-      <template v-if="status && status.puzzlesFound > 0">
-        <p class="counter">{{ solvedCount }} puzzles solved this session</p>
-        <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" @gave-up="handleGaveUp" />
-
-        <p v-if="ratingChange !== null" class="rating-change">
-          <span :class="['delta', deltaClass(ratingChange)]">{{ formatDelta(ratingChange) }} rating</span>
+      <template v-else>
+        <p class="counter">
+          {{ `Linked to chess.com as ${linkedUsername}` }}
+          <button class="link" @click="unlinkAccount">Unlink</button>
         </p>
 
-        <div v-if="solved || gaveUp" class="feedback">
-          <span class="feedback-prompt">Was this a good puzzle?</span>
-          <button
-            :class="['feedback-vote', { active: feedbackGiven === true }]"
-            @click="giveFeedback(true)"
-          >
-            Good puzzle
-          </button>
-          <button
-            :class="['feedback-vote', { active: feedbackGiven === false }]"
-            @click="giveFeedback(false)"
-          >
-            Not helpful
-          </button>
+        <form v-if="!status || status.status === 'idle'" class="import-form" @submit.prevent="startImport">
+          <button type="submit" :disabled="starting">{{ starting ? 'Starting…' : 'Import games' }}</button>
+        </form>
+
+        <div v-else class="progress">
+          <p v-if="status.status === 'running'" class="counter">
+            Analyzed {{ status.gamesProcessed }} games — {{ status.puzzlesFound }} puzzles found so far…
+          </p>
+          <p v-else-if="status.status === 'done'" class="counter">
+            Done — analyzed {{ status.gamesProcessed }} games, {{ status.puzzlesFound }} puzzles found.
+            <button class="link" @click="startImport">Import more</button>
+          </p>
+          <p v-else-if="status.status === 'error'" class="counter error">
+            {{ status.errorMessage ?? 'Something went wrong.' }}
+            <button class="link" @click="startImport">Retry</button>
+          </p>
         </div>
 
-        <button v-if="solved || gaveUp" class="next" @click="nextPuzzle">Next puzzle →</button>
+        <template v-if="status && status.puzzlesFound > 0">
+          <p class="counter">{{ solvedCount }} puzzles solved this session</p>
+          <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" @gave-up="handleGaveUp" />
+
+          <p v-if="ratingChange !== null" class="rating-change">
+            <span :class="['delta', deltaClass(ratingChange)]">{{ formatDelta(ratingChange) }} rating</span>
+          </p>
+
+          <div v-if="solved || gaveUp" class="feedback">
+            <span class="feedback-prompt">Was this a good puzzle?</span>
+            <button
+              :class="['feedback-vote', { active: feedbackGiven === true }]"
+              @click="giveFeedback(true)"
+            >
+              Good puzzle
+            </button>
+            <button
+              :class="['feedback-vote', { active: feedbackGiven === false }]"
+              @click="giveFeedback(false)"
+            >
+              Not helpful
+            </button>
+          </div>
+
+          <button v-if="solved || gaveUp" class="next" @click="nextPuzzle">Next puzzle →</button>
+        </template>
       </template>
     </template>
   </div>

@@ -242,12 +242,30 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     position, `solution[1]` = Stockfish's suggested correct move,
     `solution[2+]` = its continuing principal variation) — `ChessBoard.vue`
     needed zero changes to play these
-  - A personal puzzle's `rating` is the player's own chess.com rating in
-    that specific game — simple, no separate difficulty heuristic. `themes`
-    is left `null` (no motif classification in v1) — a personal puzzle
-    moves the solver's *overall* rating on attempt but not any category
-    rating; a known, accepted limitation, not a bug, if `/stats`'s category
-    chart doesn't move after solving one
+  - A personal puzzle's `rating` is `puzzle_rating_model`'s prediction when
+    a trained model is available, falling back to the player's own
+    chess.com rating in that specific game otherwise (see Phase 2.5 below)
+    — the fallback is what shipped originally and is still what runs if
+    `ml/models/puzzle_rating_model.joblib` is ever missing. `themes` is
+    left `null` (no motif classification in v1) — a personal puzzle moves
+    the solver's *overall* rating on attempt but not any category rating;
+    a known, accepted limitation, not a bug, if `/stats`'s category chart
+    doesn't move after solving one
+  - **Linking a chess.com account** (`User.chessComUsername`,
+    `ChessComLinkController`, `GET`/`POST`/`DELETE /api/me/chess-com-link`)
+    is the durable source of truth an import reads from — replacing the
+    original flow of re-typing a username into the import form every time.
+    `POST` validates the username against chess.com's public profile API
+    (`GET /pub/player/{username}`) before persisting, so
+    `chessComUsername` is never a username that doesn't exist there.
+    `GameImportController::start()` reads the linked username straight off
+    the `User` (400 if none linked yet) rather than taking one in the
+    request body. If a user later links a *different* account,
+    `run_import` detects the username changed and resets
+    `games_processed`/`last_archive` rather than resuming the new account
+    from the old one's progress — already-found puzzles stay, since
+    they're real `Puzzle` rows tied to specific games, not something an
+    account switch should discard.
   - **Requires Stockfish installed locally too** for `ml/` dev/tests
     (production's `ml/Dockerfile` apt-installs it) — on Windows,
     `winget install Stockfish.Stockfish` and then point `STOCKFISH_PATH` in
@@ -352,14 +370,31 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     "obvious," clearly-forced solution rates *easier*, one with close
     alternatives rates *harder*, which matches real chess intuition about
     what makes a tactic hard to be sure of.
-  - **Neither model's inference is wired into `game_import.py` yet** — the
-    trained artifacts (`ml/var/puzzle_quality_model.joblib`,
-    `puzzle_rating_model.joblib`, gitignored, regenerable from the DB)
-    exist but nothing scores live candidates with them. That, categorizing
-    puzzles (the third leg of this — see design doc discussion), richer
-    features (mate distance, material swing, game phase), and eventually
-    blending in our own `puzzle_feedback` votes as they accumulate are all
-    open next steps.
+  - **The rating regressor is wired into `game_import.py` (built)** —
+    `find_blunders` takes an optional `rating_model` (a loaded
+    `puzzle_rating_model` pipeline); when given, a candidate's `rating` is
+    `puzzle_rating_model.predict()` on its already-computed
+    `PuzzleQualityAnalysis`, rounded, instead of falling back to the
+    player's own chess.com rating in that game. `run_import` loads the
+    model once per import run via `try_load()` (returns `None` — not an
+    exception — if no trained model file exists, so a fresh environment
+    without one degrades to the old heuristic rather than breaking
+    imports) and threads it through every game in that run. Verified live
+    against hikaru's real games: candidates that would have inherited his
+    ~3466 bullet rating now carry model-predicted personal-puzzle ratings
+    in the 1600–2050 range instead — the entire point of this model.
+    **Committed to `ml/models/` on purpose, not gitignored** — Railway's
+    container filesystem is ephemeral (see Deployment below), so a model
+    that only ever lived in `ml/var/` would vanish on the next deploy and
+    silently fall back to the heuristic in production. The quality
+    classifier's inference is *not* wired in anywhere yet — nothing calls
+    `puzzle_quality_model.predict()` outside its own tests.
+  - Open next steps: categorizing puzzles (the third leg of this — see
+    design doc discussion), richer features (mate distance, material
+    swing, game phase), wiring in the quality classifier too (e.g. to
+    filter or rank candidates), and eventually blending our own
+    `puzzle_feedback` votes into both models' training data as they
+    accumulate.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
