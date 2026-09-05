@@ -33,11 +33,18 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   internally — don't add a direct `chess.js` dependency, it's already pulled
   in transitively)
 - `vue-router` for `/` (puzzle solving), `/stats` (per-category rating chart
-  + attempt history), and `/friends` (leaderboard)
-- `PuzzleView.vue` has a mode toggle (Rating / Weak Spots / Random) sent as
-  `?mode=` to `/api/puzzles/random`, shown only when signed in (an anonymous
-  request always gets Random server-side regardless, so the toggle would be
-  inert). Switching modes fetches a new puzzle immediately
+  + attempt history), `/friends` (leaderboard), and `/my-games` (chess.com
+  blunder import — see ml/'s Phase 2 below)
+- The Rating / Weak Spots / Random mode toggle lives in `App.vue`'s top
+  toolbar, not `PuzzleView.vue` — a hover/focus submenu under the "Puzzles"
+  nav link (shown only when signed in; an anonymous request always gets
+  Random server-side regardless, so the toggle would be inert). The mode
+  itself is a shared singleton (`puzzleMode.ts`, mirrors `session.ts`'s
+  pattern) since the picker (toolbar) and the thing reacting to it
+  (`PuzzleView.vue`, via a `watch`) are different components; picking a
+  mode from another page also navigates to `/`, since the mode is
+  meaningless anywhere else. Sent as `?mode=` to `/api/puzzles/random`;
+  switching modes fetches a new puzzle immediately
 - No component library beyond that; styling is hand-written CSS, chess-themed
   palette (walnut/charcoal background `#1c1a17`, parchment text `#ede6d6`,
   brass accent `#b8985a`) — intentionally not generic SaaS-dashboard styling
@@ -157,6 +164,18 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   defaulting to 1500/RD 350 for a category with no rows yet — the chart's
   whole point is a fixed, always-the-same-shape set of axes, never "whatever
   this user happens to have data in"
+- `PuzzleAttemptController` snapshots each `Rateable`'s rating *before*
+  calling `GlickoRatingService::recordAttempt()` (which mutates it in
+  place) so the response can include the delta alongside the new value —
+  `GlickoRatingService` itself has no notion of "change," only before/after
+  state, so the diffing happens at the call site. The frontend shows this
+  as a green/red `±N rating` badge as soon as the attempt is recorded
+  (which can be before the puzzle reaches a terminal state — a first
+  mistake already changes the rating even if the user then retries and
+  solves); category deltas are computed the same way, once per category
+  the puzzle's themes map to, but only *displayed* in Weak Spots mode —
+  they're always present in the response either way, since categories are
+  a property of the puzzle, not the selection mode
 - `app:recompute-category-ratings`: rebuilds `UserCategoryRating` from
   scratch by replaying every `PuzzleAttempt` (source of truth) through the
   current category mapping, in chronological order, via the same
@@ -194,10 +213,49 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   could otherwise act on (e.g. biasing toward "backRankMate" specifically
   rather than all of "Checkmate"). `PuzzleSelectionService`'s `weakness`
   mode is the only caller — see above
-- Phase 2/3 (further out): generating candidate puzzles from a player's own
-  chess.com games, then generating positions from scratch when neither the
-  puzzle database nor their games have enough natural examples of a
-  detected weakness
+- Phase 2 (built): **My Games** — puzzles generated from a player's own
+  chess.com blunders, its own tab (`/my-games`), separate from the
+  Rating/Weak Spots/Random toggle since it's a different *kind* of puzzle
+  source (one user's own, not the shared Lichess pool), not another
+  selection mode over the same pool. `ml/src/ml/game_import.py` fetches a
+  user's games from chess.com's public API (no auth needed) and runs real
+  Stockfish analysis (`python-chess` + the `stockfish` Debian package,
+  `depth=12`) to find moves where the eval swung >= `BLUNDER_THRESHOLD_CP`
+  (250) and the position wasn't already lost (`DECIDED_POSITION_CP`, 600 —
+  one-sided on purpose: a blunder that throws away a *winning* position is
+  exactly what this should find; a further mistake in an already-lost game
+  isn't an interesting puzzle). Runs as a background thread per user,
+  checkpointed in `ml/`'s own `game_import_progress` table (last archive
+  month scanned, running totals) so a second "start" call resumes deeper
+  into history instead of re-scanning — puzzles arrive as soon as a game
+  yields one, more keep coming while you play.
+  - **`ml/` still never writes to `puzzle`** (see the ownership-boundary
+    docstring in `db.py`) — found candidates land in `ml/`'s own
+    `personal_puzzle_candidate` table instead. `backend/`'s
+    `GameImportController` polls `ml/`'s status endpoint and persists each
+    undelivered candidate as a real `Puzzle` row itself (`owner` = the
+    importing `User`, `externalId` = a `"chesscom:{gameId}:{ply}"` dedup
+    key) — this is *why* a personal puzzle's attempts/rating/history all
+    work identically to a Lichess one, for free.
+  - Puzzle FEN/solution follow the exact same convention as every Lichess
+    puzzle (`solution[0]` = the opponent's actual move that led into the
+    position, `solution[1]` = Stockfish's suggested correct move,
+    `solution[2+]` = its continuing principal variation) — `ChessBoard.vue`
+    needed zero changes to play these
+  - A personal puzzle's `rating` is the player's own chess.com rating in
+    that specific game — simple, no separate difficulty heuristic. `themes`
+    is left `null` (no motif classification in v1) — a personal puzzle
+    moves the solver's *overall* rating on attempt but not any category
+    rating; a known, accepted limitation, not a bug, if `/stats`'s category
+    chart doesn't move after solving one
+  - **Requires Stockfish installed locally too** for `ml/` dev/tests
+    (production's `ml/Dockerfile` apt-installs it) — on Windows,
+    `winget install Stockfish.Stockfish` and then point `STOCKFISH_PATH` in
+    `ml/.env` at the installed `.exe`, since it won't land on `PATH`
+    automatically the way the Linux container's apt package does
+- Phase 3 (further out): generating positions from scratch when neither the
+  puzzle database nor a player's own games have enough natural examples of
+  a detected weakness
 
 ## Why Symfony (not Spring Boot)
 
