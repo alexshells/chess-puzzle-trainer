@@ -13,6 +13,7 @@ from ml.game_import import find_blunders
 
 TARGET = "player_one"
 FORCED_GAP_CP = 100
+MAX_SOLVER_MOVES = 3
 
 # 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 — White ("player_one") "blunders" on move 3
 # per the fake engine's scripted evals below; the actual chess content only
@@ -98,6 +99,7 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
     )
 
     assert len(candidates) == 1
@@ -138,6 +140,7 @@ def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
     )
 
     assert len(candidates) == 1
@@ -170,12 +173,51 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
     )
 
     assert len(candidates) == 1
     assert candidates[0].forced is True
     assert candidates[0].refutation_gap_cp is None
     assert candidates[0].setup_swing_cp == 50 - 15
+
+
+def test_truncates_the_solution_to_max_solver_moves():
+    # A 7-ply PV would otherwise mean 4 solver moves — more than
+    # MAX_SOLVER_MOVES (3) allows, so it should be cut to 2*3-1=5 plies,
+    # ending on the solver's 3rd move rather than running further.
+    long_pv = [chess.Move.from_uci(uci) for uci in ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "d2d3"]]
+    engine = FakeEngine(
+        [
+            (999, [_PV_MOVE]),  # pre-setup eval before Nf3 (unused)
+            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3 — small swing, not a candidate
+            (10, [_PV_MOVE]),  # after Nf3
+            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
+            [(15, long_pv), (-90, long_pv)],  # puzzle position before Bxc6 (multipv=2) — long_pv is the best line
+            (-300, [_PV_MOVE]),  # after Bxc6
+        ]
+    )
+
+    candidates = find_blunders(
+        GAME_PGN,
+        TARGET,
+        player_rating=1200,
+        game_id="test-game",
+        engine=engine,
+        depth=1,
+        blunder_threshold_cp=250,
+        decided_position_cp=600,
+        forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=3,
+    )
+
+    assert len(candidates) == 1
+    # solution[0] is the opponent's setup move; solution[1:] is capped at 5
+    # (2*3-1) of long_pv's 7 moves — ending on a solver move (index 4 = the
+    # 3rd solver move: solver, reply, solver, reply, solver).
+    solution = candidates[0].solution
+    assert len(solution) == 1 + 5
+    assert solution[1:] == ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"]
 
 
 def test_skips_blunders_in_an_already_lost_position():
@@ -205,6 +247,7 @@ def test_skips_blunders_in_an_already_lost_position():
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
     )
 
     assert candidates == []
@@ -232,6 +275,7 @@ def test_uses_the_rating_model_when_given_instead_of_player_rating():
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
         rating_model=FakeRatingModel(1837.6),
     )
 
@@ -253,6 +297,7 @@ def test_ignores_games_the_target_did_not_play_in():
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
+        max_solver_moves=MAX_SOLVER_MOVES,
     )
 
     assert candidates == []

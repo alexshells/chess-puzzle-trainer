@@ -142,14 +142,24 @@ function handleMove() {
   const reply = props.puzzle.solution[replyIndex]
 
   if (reply === undefined) {
+    // No opponent reply at all — the move just verified was the puzzle's last.
     solutionIndex.value = replyIndex
     mode.value = 'solved'
     emit('solved')
     return
   }
 
-  solutionIndex.value = replyIndex + 1
   playMove(reply)
+  solutionIndex.value = replyIndex + 1
+
+  // The solution can end on an auto-played reply, not just a solver move —
+  // e.g. a 2-solver-move puzzle is [setup, solver, reply, solver, reply].
+  // Without this check the board would sit waiting for a nonexistent next
+  // solver move and flag whatever's played next as a mistake.
+  if (props.puzzle.solution[solutionIndex.value] === undefined) {
+    mode.value = 'solved'
+    emit('solved')
+  }
 }
 
 /** Undoes the mistaken move and lets the user try again from the same spot. */

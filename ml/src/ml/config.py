@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # filter candidates) — see CLAUDE.md's Phase 2.5 note on puzzle-quality
     # feedback for why this isn't wired into a hard threshold yet.
     forced_gap_cp: int = 100
+    # How many of the solver's own moves a generated puzzle's solution can
+    # require, at most — a puzzle always ends on a solver move (never an
+    # auto-played opponent reply), so this caps solving_pv at
+    # 2 * max_solver_moves - 1 plies (solver, reply, solver, reply, ...,
+    # solver). Kept modest on purpose: a very long forced sequence starts to
+    # feel like "convert a winning endgame" rather than "spot the tactic".
+    max_solver_moves: int = 3
 
     @property
     def resolved_database_url(self) -> str:

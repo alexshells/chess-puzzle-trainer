@@ -90,6 +90,7 @@ def find_blunders(
     blunder_threshold_cp: int,
     decided_position_cp: int,
     forced_gap_cp: int,
+    max_solver_moves: int,
     rating_model: Pipeline | None = None,
 ) -> list[BlunderCandidate]:
     """
@@ -98,6 +99,11 @@ def find_blunders(
     didn't happen in an already-lost position (a further mistake there isn't
     an interesting puzzle) — a large *winning* swing thrown away is exactly
     what this is looking for, so the decided-position skip is one-sided.
+
+    A candidate's solution is truncated to at most max_solver_moves of the
+    solver's own moves (2 * max_solver_moves - 1 plies of solving_pv) — see
+    config.py's max_solver_moves. Always ends on a solver move, never an
+    auto-played reply (ChessBoard.vue expects that; see its handleMove()).
 
     rating_model, if given, predicts each candidate's rating from position
     features (puzzle_rating_model.py) instead of falling back to the
@@ -150,7 +156,8 @@ def find_blunders(
                     eval_after is not None
                     and analysis.puzzle_position_eval_cp - eval_after >= blunder_threshold_cp
                 ):
-                    solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[:4]]
+                    max_solving_plies = 2 * max_solver_moves - 1
+                    solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[:max_solving_plies]]
                     rating = (
                         round(predict_rating(rating_model, analysis))
                         if rating_model is not None
@@ -319,6 +326,7 @@ def _process_one_game(
         blunder_threshold_cp=settings.blunder_threshold_cp,
         decided_position_cp=settings.decided_position_cp,
         forced_gap_cp=settings.forced_gap_cp,
+        max_solver_moves=settings.max_solver_moves,
         rating_model=rating_model,
     )
 
