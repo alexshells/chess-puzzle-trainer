@@ -280,7 +280,12 @@ function viewLive() {
       <button @click="viewLive">&gt;|</button>
     </div>
 
-    <button class="restart" @click="restartPuzzle">Restart puzzle</button>
+    <!-- Only makes sense once you've missed it — restarting a puzzle you're
+         still actively solving (or already solved) doesn't do anything a
+         user would want. -->
+    <button v-if="mode === 'mistake' || mode === 'given-up'" class="restart" @click="restartPuzzle">
+      Restart puzzle
+    </button>
   </div>
 </template>
 
