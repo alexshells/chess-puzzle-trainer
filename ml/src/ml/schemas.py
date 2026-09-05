@@ -42,3 +42,20 @@ class GameImportStatusResponse(BaseModel):
     # So the frontend can resume/retry without the user re-typing it — e.g.
     # "Import more" after a fresh page load, with no in-memory form state.
     chessComUsername: str | None = None
+
+
+class ChoosePuzzleResponse(BaseModel):
+    # None if the user has no personal puzzles yet — caller falls back to
+    # its own random pick (see backend's MlDeliveryClient).
+    puzzleId: int | None
+
+
+class ApplyRewardRequest(BaseModel):
+    puzzleId: int
+    stars: int
+
+
+class ApplyRewardResponse(BaseModel):
+    # False if no matching pending pull was found (e.g. feedback on a
+    # puzzle older than the bandit) — not an error, just nothing to update.
+    updated: bool

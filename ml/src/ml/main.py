@@ -6,8 +6,12 @@ from sqlalchemy import select
 
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, SessionLocal
+from ml.delivery_service import apply_reward, choose_puzzle_for_user
 from ml.game_import import run_import
 from ml.schemas import (
+    ApplyRewardRequest,
+    ApplyRewardResponse,
+    ChoosePuzzleResponse,
     GameImportCandidateOut,
     GameImportStartRequest,
     GameImportStatusResponse,
@@ -141,6 +145,7 @@ def get_game_import_status(user_id: int) -> GameImportStatusResponse:
                 externalId=c.external_id,
                 forced=bool(c.forced),
                 setupSwingCp=c.setup_swing_cp or 0,
+                qualityScore=c.quality_score,
             )
             for c in undelivered
         ]
@@ -158,3 +163,28 @@ def get_game_import_status(user_id: int) -> GameImportStatusResponse:
         )
     finally:
         session.close()
+
+
+@app.get("/users/{user_id}/delivery/choose-puzzle", response_model=ChoosePuzzleResponse)
+def choose_puzzle(user_id: int) -> ChoosePuzzleResponse:
+    """
+    Called server-to-server by backend/'s MlDeliveryClient in place of a
+    plain random pick over the user's "My Games" pool. Runs one Thompson
+    Sampling draw (delivery_bandit.py) and records it (BanditPull) so a
+    later /reward call can attribute a star rating back to this exact
+    decision. puzzleId is None if the user has no personal puzzles yet —
+    the caller's signal to fall back to its own random selection.
+    """
+    puzzle_id = choose_puzzle_for_user(user_id)
+    return ChoosePuzzleResponse(puzzleId=puzzle_id)
+
+
+@app.post("/users/{user_id}/delivery/reward", response_model=ApplyRewardResponse)
+def reward_delivery(user_id: int, body: ApplyRewardRequest) -> ApplyRewardResponse:
+    """
+    Called server-to-server by backend/'s PuzzleFeedbackController right
+    after it saves a star rating — attributes that reward back to whichever
+    arm's pull produced this puzzle, updating that arm's belief.
+    """
+    updated = apply_reward(user_id, body.puzzleId, body.stars)
+    return ApplyRewardResponse(updated=updated)

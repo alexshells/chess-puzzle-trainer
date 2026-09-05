@@ -48,6 +48,17 @@ puzzle_table = Table(
     # Stored as JSON text regardless of engine (SQLite CLOB / MySQL JSON) —
     # Doctrine's #[ORM\Column] on an `array`-typed property maps to JSON.
     Column("themes", Text, nullable=True),
+    # Null for the shared Lichess pool; set for a "My Games" personal puzzle
+    # (see Puzzle::$owner). The delivery bandit (delivery_service.py) only
+    # ever selects from a single user's owned puzzles.
+    Column("owner_id", Integer, nullable=True),
+    # Puzzle-quality signals — see Puzzle::$forced/$setupSwingCp/$qualityScore
+    # and CLAUDE.md's Phase 2.5 note. Read here for the bandit's
+    # forced/clean and biggest-blunder arms; only ever populated for
+    # personal puzzles, same as owner_id.
+    Column("forced", Boolean, nullable=True),
+    Column("setup_swing_cp", Integer, nullable=True),
+    Column("quality_score", Float, nullable=True),
 )
 
 puzzle_attempt_table = Table(
