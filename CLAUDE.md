@@ -357,6 +357,29 @@ gitignored).
   puzzles (or narrowing the sample to fewer, denser bands) would raise the
   hit rate; not done since ~30K is enough for the site itself to feel fully
   populated.
+- **Vercel needs an explicit SPA rewrite (`frontend/vercel.json`)** — without
+  one, a hard refresh or direct link on any client-side route other than `/`
+  (e.g. `/stats`, `/my-games`) 404s at Vercel's edge before vue-router ever
+  loads, since Vercel only serves the exact static file/path requested.
+  `{"rewrites": [{"source": "/(.*)", "destination": "/index.html"}]}` fixes
+  it — found by hitting `/my-games` directly during "My Games" launch
+  verification (in-app `<RouterLink>` nav had always masked this).
+- **ml/'s own Alembic migrations are a separate deploy step from
+  `railway up`**, easy to forget: deploying new code that references a new
+  table (`game_import_progress`, `personal_puzzle_candidate`) does not run
+  `alembic upgrade head` against prod — that's a separate
+  `railway ssh --service ml -- uv run alembic upgrade head`, same as
+  backend's `doctrine:migrations:migrate` is a separate step from its own
+  deploy. Missed once during "My Games" launch (500s with "table doesn't
+  exist" until run manually).
+- **Debian's `stockfish` apt package installs to `/usr/games/stockfish`**,
+  which isn't on `$PATH` for the non-login shell a `CMD`/`RUN` runs under —
+  `config.py`'s `stockfish_path` default of a bare `"stockfish"` command
+  failed in prod (worked locally on Windows only because `.env` pointed at
+  an explicit winget-installed path, never exercising the bare-command
+  fallback). Fixed in `ml/Dockerfile` with
+  `ln -s /usr/games/stockfish /usr/local/bin/stockfish` rather than
+  hardcoding the Debian-specific path into application config.
 
 ## Open items / unverified
 
