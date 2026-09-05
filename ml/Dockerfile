@@ -20,6 +20,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
+# Trained model artifacts (puzzle_quality_model.py / puzzle_rating_model.py's
+# default paths) — committed, not gitignored, precisely so they end up here.
+COPY models ./models
 
 RUN uv sync --frozen --no-dev
 
