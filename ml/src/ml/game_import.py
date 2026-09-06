@@ -82,15 +82,22 @@ class BlunderCandidate:
 
 
 def fetch_archive_urls(username: str) -> list[str]:
-    """Chess.com's public API — no auth needed. Oldest-to-newest order."""
+    """
+    Chess.com's public API — no auth needed. Oldest-to-newest order.
+    follow_redirects=True matters here specifically: chess.com 301s any
+    non-canonically-cased username (e.g. "AlexShellsy" -> "alexshellsy"),
+    and httpx does not follow redirects by default the way requests does —
+    without this, a mixed-case username raises on the 301 itself instead of
+    reaching the actual archive list.
+    """
     url = f"https://api.chess.com/pub/player/{username}/games/archives"
-    response = httpx.get(url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = httpx.get(url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=True)
     response.raise_for_status()
     return response.json()["archives"]
 
 
 def fetch_games(archive_url: str) -> list[dict]:
-    response = httpx.get(archive_url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = httpx.get(archive_url, headers={"User-Agent": _USER_AGENT}, timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=True)
     response.raise_for_status()
     return response.json()["games"]
 

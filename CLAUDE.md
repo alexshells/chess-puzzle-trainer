@@ -697,9 +697,44 @@ gitignored).
   deploy. Missed during the original "My Games" launch (500s with "table
   doesn't exist" until run manually) — and missed *again* wiring up the
   puzzle-quality/rating models, since `forced`/`refutation_gap_cp`/
-  `setup_swing_cp` had only ever been migrated locally. Two misses on the
-  same gotcha is a sign this needs a real fix (a deploy script or CI step
-  that runs both migration commands automatically), not just a note here.
+  `setup_swing_cp` had only ever been migrated locally. **And missed a
+  third time**: the `ScannedGame` migration (per-game import tracking, see
+  Phase 2's resumability section) shipped and got redeployed to `ml/`
+  without ever running `alembic upgrade head` against prod — went
+  unnoticed for a while since nothing exercises `run_import` in prod
+  automatically, only surfaced when debugging a live user's "My Games"
+  import (see the redirect bug below; fixing that would have immediately
+  hit "table 'scanned_game' doesn't exist" if this hadn't been caught
+  first). Three misses on the same gotcha is a sign this needs a real fix
+  (a deploy script or CI step that runs both migration commands
+  automatically), not just a note here.
+- **chess.com 301-redirects any non-canonically-cased username** (e.g.
+  `AlexShellsy` → `alexshellsy`) on `/pub/player/{username}/games/archives`,
+  and `httpx` — unlike `requests` — does not follow redirects by default.
+  `game_import.py`'s `fetch_archive_urls()`/`fetch_games()` didn't set
+  `follow_redirects=True`, so linking a chess.com account with any
+  uppercase letters in the username made every import attempt fail with
+  `httpx.HTTPStatusError: Redirect response '301 Moved Permanently'...`
+  even though the link itself (validated via Symfony's HttpClient, which
+  *does* follow redirects by default) succeeded — the mismatch between the
+  two HTTP clients' redirect defaults is what made this pass validation but
+  fail on actual import. Found via a real user (linked as `AlexShellsy`)
+  hitting exactly this on production.
+- **Puzzles from a previously-linked chess.com username are never removed
+  on re-link** — this is documented, intentional behavior (`run_import`
+  resets `games_processed`/`last_archive` on a username change but leaves
+  already-generated `Puzzle` rows alone, since they're real rows with their
+  own attempt/feedback history). In practice this means switching which
+  chess.com account is linked leaves the *previous* account's puzzles
+  sitting in the pool, and `PersonalPuzzleQueue` (Phase 2.8) will happily
+  serve them — surprising if you're testing with a fresh username expecting
+  a clean slate, since what you get back "doesn't look like my games" is
+  technically correct (they're somebody else's games). No automatic fix
+  applied; if this bites during testing again, the puzzles for that owner
+  can be discarded manually (`UPDATE puzzle SET discarded_at = NOW() WHERE
+  owner_id = ? AND externalId NOT LIKE 'chesscom:<new game ids>%'` in
+  practice just means re-rating them 1-2 stars via feedback, or a one-off
+  SQL cleanup) rather than deleting them outright.
 - **A Dockerfile only ships what it explicitly `COPY`s.** `ml/models/`
   (the committed, non-gitignored trained model artifacts —
   `puzzle_rating_model.py`/`puzzle_quality_model.py`'s default load path)
