@@ -65,10 +65,11 @@ class BlunderCandidate:
     solution: list[str]
     external_id: str
     rating: int
-    # chess.com's own game view URL — lets /stats link a "My Games" puzzle
-    # back to the actual game it came from. Not the same identifier as
-    # external_id/_game_id() (that's the internal uuid); this is what a
-    # human actually clicks.
+    # chess.com's own game view URL, with a ?move={ply} deep link to this
+    # puzzle's exact starting position — lets /stats link a "My Games"
+    # puzzle straight to the moment it happened, not just the game. Not the
+    # same identifier as external_id/_game_id() (that's the internal uuid);
+    # this is what a human actually clicks.
     game_url: str
     # Puzzle-quality signals from puzzle_quality.py, not (yet) used to filter
     # candidates — see config.py's forced_gap_cp. `forced=True` means the
@@ -202,7 +203,16 @@ def find_blunders(
                             solution=solution,
                             external_id=f"chesscom:{game_id}:{ply}",
                             rating=rating,
-                            game_url=game_url,
+                            # chess.com's live game viewer supports a
+                            # ?move={ply} deep link (verified live against a
+                            # real game — 0 = starting position, N = the
+                            # position after N plies), and ply here is
+                            # exactly "how many plies played up to and
+                            # including last_move" — i.e. the puzzle's own
+                            # starting position. Appending it here means
+                            # every consumer of game_url gets the deep link
+                            # for free, no ply parsing required downstream.
+                            game_url=f"{game_url}?move={ply}",
                             quality_score=quality_score,
                             forced=analysis.forced,
                             refutation_gap_cp=analysis.refutation_gap_cp,

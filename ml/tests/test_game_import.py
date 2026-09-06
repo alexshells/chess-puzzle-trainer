@@ -116,7 +116,10 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     assert len(candidates) == 1
     candidate = candidates[0]
     assert candidate.external_id == "chesscom:test-game:4"
-    assert candidate.game_url == "https://www.chess.com/game/live/12345"
+    # ?move=4 matches external_id's ply (4) — verified live against a real
+    # chess.com game that this deep-links to the puzzle's exact starting
+    # position, not just the game (see game_import.py's game_url comment).
+    assert candidate.game_url == "https://www.chess.com/game/live/12345?move=4"
     assert candidate.rating == 1200
     # solution[0] is the opponent's move (Nc6) that led into the puzzle
     # position; solution[1:] is the engine's suggested line from there.

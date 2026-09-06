@@ -588,10 +588,28 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   `PuzzleAttemptController::serializeAttempt()`. `AttemptHistoryTable.vue`
   renders the puzzle cell as a link when `gameUrl` is present, plain text
   otherwise (Lichess puzzles, and any personal puzzle imported before this
-  field existed — not backfilled). `/stats`'s history is now a Lichess/My
-  Games *selector* (one table visible at a time) rather than both tables
-  shown stacked, now that each has its own link behavior worth focusing on
+  field existed — not backfilled by any code path, though production's one
+  real test account was backfilled manually once via a one-off script:
+  re-fetched that account's chess.com archives, matched each existing
+  puzzle's `external_id` uuid back to its game, and set `gameUrl` directly
+  in prod — not something worth turning into a real migration/command for
+  a single account). `/stats`'s history is now a Lichess/My Games
+  *selector* (one table visible at a time) rather than both tables shown
+  stacked, now that each has its own link behavior worth focusing on
   individually.
+  - **`gameUrl` deep-links to the puzzle's exact position, not just the
+    game** — chess.com's live game viewer honors a `?move={N}` query
+    param (`N` = plies played, 0 = starting position; verified live by
+    watching the URL update while stepping through a real game's move
+    list, then confirming a fresh direct load of that URL reproduces the
+    exact board state). `ply` in `find_blunders()`'s loop already equals
+    "plies played up to and including the blunder move" at the moment a
+    candidate is built — exactly the puzzle's own starting position — so
+    `game_url` is built as `f"{game['url']}?move={ply}"` right there,
+    once, rather than making every downstream consumer parse `ply` back
+    out of `external_id`. Cross-checked against a real stored puzzle:
+    loading its `gameUrl` reproduced its exact stored `fen`, piece for
+    piece.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
