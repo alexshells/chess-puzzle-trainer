@@ -50,4 +50,26 @@ class PuzzleAttemptRepository extends ServiceEntityRepository
             ->getQuery()
             ->getResult();
     }
+
+    /**
+     * Every attempt ever recorded against one of $owner's own "My Games"
+     * puzzles, oldest first — PersonalPuzzleSelectionService walks this once
+     * to work out, per puzzle, whether it's solved and how long ago it was
+     * last missed. A lightweight array shape (not full PuzzleAttempt
+     * entities) since that's all the selection logic needs.
+     *
+     * @return array<int, array{puzzleId: int, success: bool}>
+     */
+    public function findChronologicalForOwnedPuzzles(User $owner): array
+    {
+        return $this->createQueryBuilder('a')
+            ->select('IDENTITY(a.puzzle) AS puzzleId', 'a.success AS success')
+            ->join('a.puzzle', 'p')
+            ->andWhere('p.owner = :owner')
+            ->setParameter('owner', $owner)
+            ->orderBy('a.createdAt', 'ASC')
+            ->addOrderBy('a.id', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
 }

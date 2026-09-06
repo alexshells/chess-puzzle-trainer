@@ -428,10 +428,14 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     backend's `Puzzle` the same way `rating`/`forced`/`setup_swing_cp`
     already are. Nothing scored it before now; the delivery bandit below is
     the first consumer.
-- Phase 2.6 (built): **delivery bandit** — contextual Thompson Sampling
-  decides which "My Games" puzzle to serve next, instead of the original
-  uniform-random pick (`findOneRandomForOwner`, now only the fallback for
-  when ml/ is unreachable or has no history for this user yet).
+- Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
+  **delivery bandit** — contextual Thompson Sampling decided which
+  "My Games" puzzle to serve next, instead of the original uniform-random
+  pick. Kept in place and still fully functional (ml/'s endpoints, tables,
+  and tests are untouched) since it was a real, working piece of
+  infrastructure worth keeping around rather than deleting outright — it's
+  just not what `GameImportController` calls anymore. Everything below this
+  point describes it as originally built.
   `ml/src/ml/delivery_bandit.py` is the pure math (kept deliberately
   separate from any DB/HTTP concern, same split as `puzzle_quality.py`);
   `ml/src/ml/delivery_service.py` is the impure wiring that reads a user's
@@ -473,17 +477,19 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     rated — so `bandit_arm_state` is always safe to recompute from scratch
     if the model ever changes (same recompute-from-log escape hatch as
     backend's `app:recompute-category-ratings`).
-  - Flow: `GameImportController::randomPersonalPuzzle()` calls ml/'s
-    `GET /users/{id}/delivery/choose-puzzle` (via the new `MlDeliveryClient`,
-    same graceful-degradation pattern as the other two Ml*Client services)
+  - Original flow (no longer wired in — Phase 2.8):
+    `GameImportController::randomPersonalPuzzle()` called ml/'s
+    `GET /users/{id}/delivery/choose-puzzle` (via `MlDeliveryClient`, same
+    graceful-degradation pattern as the other two Ml*Client services)
     instead of picking randomly; `PuzzleFeedbackController::submit()`
-    forwards each star rating to ml/'s `POST /users/{id}/delivery/reward`
+    forwarded each star rating to ml/'s `POST /users/{id}/delivery/reward`
     right after saving it, best-effort. Verified locally end-to-end through
-    the full stack: a real fetch-puzzle-then-rate-it round trip through
-    both backend and ml/ produced exactly the hand-computed posterior
-    update (prior mean 0, one 5-star observation at prior precision 1 →
-    posterior mean 2.5 — Bayesian shrinkage halfway to the observation, as
-    expected).
+    the full stack at the time: a real fetch-puzzle-then-rate-it round trip
+    through both backend and ml/ produced exactly the hand-computed
+    posterior update (prior mean 0, one 5-star observation at prior
+    precision 1 → posterior mean 2.5 — Bayesian shrinkage halfway to the
+    observation, as expected). `MlDeliveryClient` still exists and still
+    works; nothing calls it now.
   - Open next steps: categorizing puzzles (the third leg of the original
     design doc discussion) and richer context/features (mate distance,
     material swing, game phase, weak-category indicator) for both the
@@ -501,19 +507,19 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     hold non-nullable FKs into `puzzle`, so deleting a rated/attempted
     puzzle would either fail on the constraint or take the owner's own
     history down with it — exactly what this feature is trying to keep
-    intact. `PuzzleRepository::findOneRandomForOwner()`/`countForOwner()`
-    and ml/'s bandit pool (`delivery_service._load_pool()`) both filter it
-    out; `/stats`'s history and `/api/me/category-ratings` never do, since
+    intact. `PuzzleRepository::findAllForOwner()`/`countForOwner()` and
+    ml/'s bandit pool (`delivery_service._load_pool()`) both filter it out;
+    `/stats`'s history and `/api/me/category-ratings` never do, since
     discard is about future delivery, not about the past.
   - **`attemptCount`/`failedAttemptCount` are maintained at write time**
     (`Puzzle::recordAttempt()`, called from `PuzzleAttemptController::create()`
     on every attempt, any puzzle) rather than always recomputed from
-    `PuzzleAttempt` — same bias as `UserCategoryRating`. `failedAttemptCount`
-    is what the new `most_failed` bandit arm reads (see Phase 2.6 above) to
-    bias toward a puzzle the owner keeps missing, on the theory that a
-    puzzle drawing repeat failures is either genuinely load-bearing practice
-    or a candidate for a future rating that discards it — either way worth
-    surfacing rather than letting it sit unseen in the pool.
+    `PuzzleAttempt` — same bias as `UserCategoryRating`. Originally added so
+    the (now-unwired, see Phase 2.6) bandit's `most_failed` arm could bias
+    toward a puzzle the owner keeps missing; `failedAttemptCount` itself
+    still gets maintained regardless, it's just `PersonalPuzzleQueue`
+    (Phase 2.8) that actually acts on repeat misses now, and it does so
+    from raw `PuzzleAttempt` history rather than this counter.
   - **History split is a puzzle-source distinction, not a UI filter toggle**
     — `PuzzleAttemptController::serializeAttempt()` adds `isPersonal`
     (`null !== $attempt->getPuzzle()->getOwner()`); `StatsView.vue` filters
@@ -524,6 +530,52 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     so it never moves a category rating — folding it into one table made
     "why did solving this do nothing on the radar chart" unanswerable at a
     glance.
+- Phase 2.8 (built): **simplified My Games delivery** — the Thompson
+  Sampling delivery bandit (Phase 2.6) turned out to be more machinery than
+  this actually needed. Replaced for live serving with
+  `PersonalPuzzleQueue::selectNextId()` (`backend/src/Service/`, pure and
+  unit-tested with no DB involved): serve this user's own puzzles
+  lowest-rated first, and if a puzzle gets missed, make sure it comes back
+  around again soon rather than getting lost in the pool or immediately
+  repeated.
+  - **Three buckets, checked in order: due retries, then fresh, then
+    "closest to due"** — solved puzzles (any successful `PuzzleAttempt`
+    ever) are dropped entirely, they're done. Of what's left: a puzzle
+    whose most recent attempt was a failure becomes "due" once
+    `RETRY_GAP` (3) *other* personal-puzzle attempts have happened since
+    that failure — long enough it isn't back-to-back, soon enough that
+    "sprinkle in missed ones" is actually soon. If nothing's due yet, the
+    lowest-rated never-attempted puzzle goes next. If nothing's fresh
+    either (everything left was missed recently), serve whichever miss is
+    closest to its retry gap rather than returning nothing — the queue
+    should never dead-end while the user still has puzzles left to solve.
+  - **`PersonalPuzzleSelectionService` is the only impure part** — it loads
+    the owner's non-discarded puzzles (`PuzzleRepository::findAllForOwner()`,
+    replacing the old `findOneRandomForOwner()`) and their chronological
+    attempt history on those puzzles specifically
+    (`PuzzleAttemptRepository::findChronologicalForOwnedPuzzles()`), turns
+    that into one `PersonalPuzzleCandidate` per puzzle (solved / ever
+    attempted / attempts-since-last-failure), and hands the list to the
+    pure selector — same pure-core/impure-wiring split used everywhere else
+    in this codebase (`find_blunders`/`run_import`, `select_puzzle_for_arm`/
+    `choose_puzzle_for_user`).
+  - **The bandit wasn't deleted, just unwired** — `GameImportController`
+    no longer calls `MlDeliveryClient::choosePuzzle()`, and
+    `PuzzleFeedbackController::submit()` no longer calls
+    `applyReward()`. ml/'s `delivery_bandit.py`/`delivery_service.py`,
+    its endpoints, its tables, and its tests are all still there and still
+    work — there was just no real benefit to ripping out a working system
+    over reverting to something simpler for now. `MlDeliveryClient` is the
+    one piece of backend code with no remaining caller as a result; revisit
+    it if the bandit approach ever comes back.
+  - Verified locally end-to-end against real data (not just the unit
+    tests): seeded a test account's "My Games" pool, confirmed the lowest-
+    rated unattempted puzzle serves first, then walked through failing
+    puzzles one at a time and confirmed a miss resurfaces exactly once
+    `RETRY_GAP` other attempts have passed — including the "multiple
+    puzzles due at once" case (the one missed longest ago wins) and the
+    priority order (a due retry always wins over a fresh puzzle, even a
+    lower-rated one).
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness

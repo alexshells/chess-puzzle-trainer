@@ -125,26 +125,26 @@ class PuzzleRepository extends ServiceEntityRepository
         return [] === $matches ? null : $matches[array_rand($matches)];
     }
 
-    /** Uniform-random pick among this user's own "My Games" chess.com-derived puzzles, or null if they have none. */
-    /** Excludes discarded puzzles (Puzzle::$discardedAt) — a 1-2 star rating means "don't serve this again", not "delete it". */
-    public function findOneRandomForOwner(User $user): ?Puzzle
+    /**
+     * Every one of this user's "My Games" puzzles eligible for delivery —
+     * excludes discarded ones (Puzzle::$discardedAt; a 1-2 star rating means
+     * "don't serve this again", not "delete it"). Feeds
+     * PersonalPuzzleSelectionService's lowest-rating-first-with-retries
+     * queue, so order doesn't matter here — the caller re-sorts.
+     *
+     * @return Puzzle[]
+     */
+    public function findAllForOwner(User $user): array
     {
-        $count = $this->countForOwner($user);
-        if (0 === $count) {
-            return null;
-        }
-
         return $this->createQueryBuilder('p')
             ->where('p.owner = :owner')
             ->andWhere('p.discardedAt IS NULL')
             ->setParameter('owner', $user)
-            ->setFirstResult(random_int(0, $count - 1))
-            ->setMaxResults(1)
             ->getQuery()
-            ->getOneOrNullResult();
+            ->getResult();
     }
 
-    /** Excludes discarded puzzles — this is "how many can you actually be served", the same set findOneRandomForOwner draws from. */
+    /** Excludes discarded puzzles — this is "how many can you actually be served", the same set findAllForOwner draws from. */
     public function countForOwner(User $user): int
     {
         return (int) $this->createQueryBuilder('p')

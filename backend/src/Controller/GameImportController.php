@@ -5,8 +5,8 @@ namespace App\Controller;
 use App\Entity\Puzzle;
 use App\Entity\User;
 use App\Repository\PuzzleRepository;
-use App\Service\MlDeliveryClient;
 use App\Service\MlGameImportClient;
+use App\Service\PersonalPuzzleSelectionService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -25,7 +25,7 @@ class GameImportController
     public function __construct(
         private readonly Security $security,
         private readonly MlGameImportClient $mlGameImportClient,
-        private readonly MlDeliveryClient $mlDeliveryClient,
+        private readonly PersonalPuzzleSelectionService $personalPuzzleSelectionService,
         private readonly PuzzleRepository $puzzleRepository,
         private readonly EntityManagerInterface $entityManager,
     ) {
@@ -65,19 +65,10 @@ class GameImportController
         /** @var User $user */
         $user = $this->security->getUser();
 
-        $puzzleId = $this->mlDeliveryClient->choosePuzzle($user);
-        $puzzle = null !== $puzzleId ? $this->puzzleRepository->find($puzzleId) : null;
-
-        // ml/ unreachable, the user has no bandit history yet, or it somehow
-        // returned an id that isn't theirs — fall back to the plain random
-        // pick rather than erroring; this is exactly last session's
-        // behavior, just the fallback path instead of the only path.
-        if (null === $puzzle || $puzzle->getOwner() !== $user) {
-            $puzzle = $this->puzzleRepository->findOneRandomForOwner($user);
-        }
+        $puzzle = $this->personalPuzzleSelectionService->selectNext($user);
 
         if (null === $puzzle) {
-            return new JsonResponse(['error' => 'No personal puzzles yet — import some games first'], 404);
+            return new JsonResponse(['error' => 'No personal puzzles to solve right now — import more games or check back later'], 404);
         }
 
         return new JsonResponse([

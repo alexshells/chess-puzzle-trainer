@@ -9,10 +9,16 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 /**
  * Talks to ml/'s delivery-bandit endpoints — same server-to-server pattern
  * as MlGameImportClient/MlRecommendationClient. Both calls degrade
- * gracefully on failure: choosePuzzle() returns null (caller falls back to
- * a plain random pick, same experience as before the bandit existed) and
- * applyReward() silently no-ops — ml/ being unreachable must never break
- * puzzle delivery or feedback submission.
+ * gracefully on failure: choosePuzzle() returns null and applyReward()
+ * silently no-ops — ml/ being unreachable must never break puzzle delivery
+ * or feedback submission.
+ *
+ * Currently unused: My Games puzzle delivery moved to the much simpler
+ * PersonalPuzzleQueue (lowest-rating-first, missed puzzles resurface after
+ * a few others) — see its docblock for why. Left in place rather than
+ * deleted, since ml/'s bandit endpoints are still live and this is the only
+ * thing that knows how to call them; wire it back in if the bandit approach
+ * gets revisited.
  */
 class MlDeliveryClient
 {

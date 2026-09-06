@@ -6,7 +6,6 @@ use App\Entity\Puzzle;
 use App\Entity\PuzzleFeedback;
 use App\Entity\User;
 use App\Repository\PuzzleFeedbackRepository;
-use App\Service\MlDeliveryClient;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -14,11 +13,14 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
 /**
- * A 1-5 star rating on a "My Games" puzzle — the reward signal the delivery
- * bandit trains on (see CLAUDE.md's ml/ section). Scoped to puzzles the
- * rating user owns: feedback is asking "how good was this blunder-derived
- * puzzle," which is only a meaningful question for their own generated
- * puzzles, not the shared, already-curated Lichess pool.
+ * A 1-5 star rating on a "My Games" puzzle. Scoped to puzzles the rating
+ * user owns: feedback is asking "how good was this blunder-derived puzzle,"
+ * which is only a meaningful question for their own generated puzzles, not
+ * the shared, already-curated Lichess pool.
+ *
+ * No longer forwarded to ml/'s delivery bandit as a reward signal — see
+ * PersonalPuzzleQueue's docblock for why puzzle delivery moved off the
+ * bandit. The bandit's endpoints are still there, just uncalled.
  */
 class PuzzleFeedbackController
 {
@@ -31,7 +33,6 @@ class PuzzleFeedbackController
         private readonly Security $security,
         private readonly EntityManagerInterface $entityManager,
         private readonly PuzzleFeedbackRepository $puzzleFeedbackRepository,
-        private readonly MlDeliveryClient $mlDeliveryClient,
     ) {
     }
 
@@ -65,10 +66,6 @@ class PuzzleFeedbackController
 
         $this->entityManager->persist($feedback);
         $this->entityManager->flush();
-
-        // Best-effort — MlDeliveryClient swallows its own failures, since
-        // ml/ being unreachable must never break feedback submission.
-        $this->mlDeliveryClient->applyReward($user, $puzzle->getId(), $stars);
 
         return new JsonResponse(['stars' => $feedback->getStars()]);
     }
