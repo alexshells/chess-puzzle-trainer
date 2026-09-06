@@ -51,6 +51,15 @@ class Puzzle
     private ?string $externalId = null;
 
     /**
+     * chess.com's own game view URL for a "My Games" puzzle — lets
+     * /stats's history link a row back to the actual game it came from.
+     * Null for the shared Lichess pool, and for personal puzzles imported
+     * before this field existed (not backfilled).
+     */
+    #[ORM\Column(length: 255, nullable: true)]
+    private ?string $gameUrl = null;
+
+    /**
      * Puzzle-quality signals from ml/'s puzzle_quality.py analysis, relayed
      * through the same candidate payload as `rating` (see
      * GameImportController) — null for the shared Lichess pool, which never
@@ -174,6 +183,18 @@ class Puzzle
     public function setExternalId(?string $externalId): static
     {
         $this->externalId = $externalId;
+
+        return $this;
+    }
+
+    public function getGameUrl(): ?string
+    {
+        return $this->gameUrl;
+    }
+
+    public function setGameUrl(?string $gameUrl): static
+    {
+        $this->gameUrl = $gameUrl;
 
         return $this;
     }

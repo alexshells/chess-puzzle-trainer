@@ -65,6 +65,11 @@ class BlunderCandidate:
     solution: list[str]
     external_id: str
     rating: int
+    # chess.com's own game view URL — lets /stats link a "My Games" puzzle
+    # back to the actual game it came from. Not the same identifier as
+    # external_id/_game_id() (that's the internal uuid); this is what a
+    # human actually clicks.
+    game_url: str
     # Puzzle-quality signals from puzzle_quality.py, not (yet) used to filter
     # candidates — see config.py's forced_gap_cp. `forced=True` means the
     # engine's top move at the puzzle position clearly beats the next-best
@@ -107,6 +112,7 @@ def find_blunders(
     target_username: str,
     player_rating: int,
     game_id: str,
+    game_url: str,
     engine: chess.engine.SimpleEngine,
     *,
     depth: int,
@@ -196,6 +202,7 @@ def find_blunders(
                             solution=solution,
                             external_id=f"chesscom:{game_id}:{ply}",
                             rating=rating,
+                            game_url=game_url,
                             quality_score=quality_score,
                             forced=analysis.forced,
                             refutation_gap_cp=analysis.refutation_gap_cp,
@@ -401,6 +408,7 @@ def _process_one_game(
         chess_com_username,
         player_rating,
         _game_id(game),
+        game["url"],
         engine,
         depth=settings.stockfish_depth,
         blunder_threshold_cp=settings.blunder_threshold_cp,
@@ -424,6 +432,7 @@ def _process_one_game(
                 solution=json.dumps(candidate.solution),
                 rating=candidate.rating,
                 external_id=candidate.external_id,
+                game_url=candidate.game_url,
                 forced=candidate.forced,
                 refutation_gap_cp=candidate.refutation_gap_cp,
                 setup_swing_cp=candidate.setup_swing_cp,

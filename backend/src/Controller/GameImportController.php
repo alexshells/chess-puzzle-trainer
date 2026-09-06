@@ -82,7 +82,7 @@ class GameImportController
     /**
      * @param array<int, array{
      *     fen: string, solution: string[], rating: int, externalId: string,
-     *     forced: bool, setupSwingCp: int, qualityScore: ?float,
+     *     forced: bool, setupSwingCp: int, qualityScore: ?float, gameUrl: ?string,
      * }> $candidates
      */
     private function persistNewCandidates(User $user, array $candidates): void
@@ -98,6 +98,7 @@ class GameImportController
             $puzzle->setSolution($candidate['solution']);
             $puzzle->setRating($candidate['rating']);
             $puzzle->setExternalId($candidate['externalId']);
+            $puzzle->setGameUrl($candidate['gameUrl'] ?? null);
             $puzzle->setOwner($user);
             $puzzle->setForced($candidate['forced']);
             $puzzle->setSetupSwingCp($candidate['setupSwingCp']);

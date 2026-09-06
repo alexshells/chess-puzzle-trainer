@@ -104,6 +104,7 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -115,6 +116,7 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     assert len(candidates) == 1
     candidate = candidates[0]
     assert candidate.external_id == "chesscom:test-game:4"
+    assert candidate.game_url == "https://www.chess.com/game/live/12345"
     assert candidate.rating == 1200
     # solution[0] is the opponent's move (Nc6) that led into the puzzle
     # position; solution[1:] is the engine's suggested line from there.
@@ -145,6 +147,7 @@ def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -178,6 +181,7 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -213,6 +217,7 @@ def test_truncates_the_solution_to_max_solver_moves():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -252,6 +257,7 @@ def test_skips_blunders_in_an_already_lost_position():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -280,6 +286,7 @@ def test_uses_the_rating_model_when_given_instead_of_player_rating():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -311,6 +318,7 @@ def test_computes_quality_score_when_a_quality_model_is_given():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -341,6 +349,7 @@ def test_quality_score_is_none_when_no_quality_model_is_given():
         TARGET,
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
@@ -361,6 +370,7 @@ def test_ignores_games_the_target_did_not_play_in():
         "someone_else",
         player_rating=1200,
         game_id="test-game",
+        game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,

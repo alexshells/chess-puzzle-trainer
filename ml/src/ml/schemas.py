@@ -24,6 +24,10 @@ class GameImportCandidateOut(BaseModel):
     solution: list[str]
     rating: int
     externalId: str
+    # chess.com's own game view URL, relayed onto backend's Puzzle so
+    # /stats can link a "My Games" row back to the actual game. None for
+    # candidates found before this field existed.
+    gameUrl: str | None = None
     # Puzzle-quality signals, relayed onto backend's Puzzle so the delivery
     # bandit can read them back out via external_metadata (see CLAUDE.md's
     # Phase 2.5 note). qualityScore is nullable — None until the quality

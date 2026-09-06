@@ -10,10 +10,14 @@ const categoryRatings = ref<CategoryRating[]>([])
 const error = ref('')
 const loading = ref(false)
 
+type HistorySource = 'lichess' | 'personal'
+const historySource = ref<HistorySource>('lichess')
+
 // Two different puzzle sources (see Puzzle::$owner) — a personal puzzle
 // never carries a category rating change, so keeping them in one table
 // made the "why does this row do nothing on /stats's radar chart" question
-// unanswerable at a glance.
+// unanswerable at a glance. Shown one at a time via the selector below
+// rather than both at once, now that each can carry its own game link.
 const personalAttempts = computed(() => attempts.value.filter((a) => a.isPersonal))
 const lichessAttempts = computed(() => attempts.value.filter((a) => !a.isPersonal))
 
@@ -55,16 +59,37 @@ watch(session, load, { immediate: true })
       </section>
 
       <section>
-        <h2>Lichess puzzle history</h2>
+        <div class="history-header">
+          <h2>Puzzle history</h2>
+          <div class="source-toggle" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="historySource === 'lichess'"
+              :class="{ active: historySource === 'lichess' }"
+              @click="historySource = 'lichess'"
+            >
+              Lichess
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="historySource === 'personal'"
+              :class="{ active: historySource === 'personal' }"
+              @click="historySource = 'personal'"
+            >
+              My Games
+            </button>
+          </div>
+        </div>
+
         <AttemptHistoryTable
+          v-if="historySource === 'lichess'"
           :attempts="lichessAttempts"
           empty-message="No Lichess puzzle attempts recorded yet — go solve a puzzle."
         />
-      </section>
-
-      <section>
-        <h2>My Games puzzle history</h2>
         <AttemptHistoryTable
+          v-else
           :attempts="personalAttempts"
           empty-message="No My Games attempts recorded yet — import your chess.com games to get started."
         />
@@ -83,7 +108,37 @@ h2 {
   font-size: 1rem;
   color: #b8985a;
   font-weight: 600;
-  margin: 0 0 1rem;
+  margin: 0;
   text-align: left;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.source-toggle {
+  display: flex;
+  gap: 0.25rem;
+  border: 1px solid #47423a;
+  border-radius: 6px;
+  padding: 0.2rem;
+}
+.source-toggle button {
+  background: none;
+  border: none;
+  color: #cfc6b3;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.source-toggle button.active {
+  background: #b8985a;
+  color: #1c1a17;
+  font-weight: 600;
 }
 </style>

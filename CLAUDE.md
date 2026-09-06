@@ -576,6 +576,22 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     puzzles due at once" case (the one missed longest ago wins) and the
     priority order (a due retry always wins over a fresh puzzle, even a
     lower-rated one).
+- Phase 2.9 (built): **game links + a Lichess/My Games history selector**.
+  `Puzzle.gameUrl` (nullable) carries chess.com's own game view URL,
+  threaded all the way from `game_import.py`'s `find_blunders()` (which
+  now takes `game_url` alongside `game_id` — they're different
+  identifiers: `_game_id()` prefers chess.com's internal `uuid`, needed
+  for `ScannedGame`/`external_id` dedup, while `game_url` is `game["url"]`
+  itself, the thing a human actually clicks) through
+  `PersonalPuzzleCandidate` → `GameImportCandidateOut.gameUrl` →
+  `GameImportController::persistNewCandidates()` → `Puzzle::$gameUrl` →
+  `PuzzleAttemptController::serializeAttempt()`. `AttemptHistoryTable.vue`
+  renders the puzzle cell as a link when `gameUrl` is present, plain text
+  otherwise (Lichess puzzles, and any personal puzzle imported before this
+  field existed — not backfilled). `/stats`'s history is now a Lichess/My
+  Games *selector* (one table visible at a time) rather than both tables
+  shown stacked, now that each has its own link behavior worth focusing on
+  individually.
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness

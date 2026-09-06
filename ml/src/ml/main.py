@@ -143,6 +143,7 @@ def get_game_import_status(user_id: int) -> GameImportStatusResponse:
                 solution=json.loads(c.solution),
                 rating=c.rating,
                 externalId=c.external_id,
+                gameUrl=c.game_url,
                 forced=bool(c.forced),
                 setupSwingCp=c.setup_swing_cp or 0,
                 qualityScore=c.quality_score,

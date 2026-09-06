@@ -161,6 +161,10 @@ class PersonalPuzzleCandidate(Base):
     # CLAUDE.md's Phase 2.5 note) — read via db.py's external_metadata, same
     # as puzzle/puzzle_attempt already are.
     external_id = Column(String(255), nullable=False, unique=True)
+    # chess.com's own game view URL — lets a "My Games" history row link
+    # back to the actual game. Nullable: candidates found before this
+    # column existed have no value to backfill.
+    game_url = Column(String(255), nullable=True)
     # Puzzle-quality signals from puzzle_quality.py's analysis, not (yet)
     # used to filter candidates. Nullable because candidates found before
     # these columns existed have no value to backfill.

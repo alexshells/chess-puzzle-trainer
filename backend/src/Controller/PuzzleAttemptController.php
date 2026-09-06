@@ -119,6 +119,10 @@ class PuzzleAttemptController
             // /stats splits its history table on this rather than lumping
             // both puzzle sources into one list.
             'isPersonal' => null !== $attempt->getPuzzle()->getOwner(),
+            // Only ever set for a personal puzzle (and only if imported
+            // after Puzzle::$gameUrl existed) — lets /stats link a "My
+            // Games" row back to the actual chess.com game.
+            'gameUrl' => $attempt->getPuzzle()->getGameUrl(),
         ];
     }
 }

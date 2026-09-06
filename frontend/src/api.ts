@@ -107,6 +107,8 @@ export interface AttemptRecord {
   createdAt: string
   /** True for a "My Games" chess.com-derived puzzle, false for the shared Lichess pool. */
   isPersonal: boolean
+  /** The chess.com game this puzzle came from, if known — null for Lichess puzzles and personal ones imported before this existed. */
+  gameUrl: string | null
 }
 
 export function fetchMyAttempts(token: string): Promise<AttemptRecord[]> {
