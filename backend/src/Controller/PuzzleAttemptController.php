@@ -46,8 +46,23 @@ class PuzzleAttemptController
 
         $ratingBefore = $user->getRating();
 
+        // A personal ("My Games") puzzle's rating is a model prediction
+        // (puzzle_rating_model.py), not earned via Glicko convergence
+        // across thousands of real solvers the way a Lichess puzzle's is —
+        // it's noisy (MAE ~367 rating points, even after retraining at
+        // 51k examples — see CLAUDE.md's Phase 2.5 note). Feeding that into
+        // the same overall Glicko rating that Lichess attempts calibrate
+        // would let a single mis-rated personal puzzle swing a rating meant
+        // to reflect skill against a consistently-rated pool. Only a
+        // shared-pool attempt (owner is null) updates the overall rating;
+        // category ratings are unaffected either way, since a personal
+        // puzzle's themes is already null (see PuzzleCategoryMapper below).
+        $isPersonalPuzzle = null !== $puzzle->getOwner();
+
         $attempt = new PuzzleAttempt($user, $puzzle, $data['success'], $data['timeSpentSeconds']);
-        $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
+        if (!$isPersonalPuzzle) {
+            $this->glickoRatingService->recordAttempt($user, $puzzle, $data['success']);
+        }
 
         // Maintained on every puzzle (not just "My Games" ones) so the
         // counters stay a simple, unconditional fact about the puzzle — the
@@ -86,7 +101,11 @@ class PuzzleAttemptController
             // rating snapshots (see design doc §4), so this stays out of serializeAttempt()
             // to avoid the list endpoint showing today's rating against every past row.
             'userRating' => $user->getRating(),
-            'ratingChange' => $user->getRating() - $ratingBefore,
+            // null (not 0) for a personal puzzle — "not applicable" is a
+            // different fact than "computed to exactly zero", and the
+            // frontend's existing null-check already treats them
+            // differently (no badge shown at all vs. a "+0 rating" badge).
+            'ratingChange' => $isPersonalPuzzle ? null : $user->getRating() - $ratingBefore,
             'categoryRatingChanges' => $categoryRatingChanges,
         ], 201);
     }

@@ -84,7 +84,10 @@ export interface AttemptResult {
   timeSpentSeconds: number
   createdAt: string
   userRating: number
-  ratingChange: number
+  // null for a "My Games" personal puzzle — its rating is model-predicted,
+  // not earned via Glicko convergence, so it no longer moves the overall
+  // rating at all (see PuzzleAttemptController::create()).
+  ratingChange: number | null
   categoryRatingChanges: CategoryRatingChange[]
 }
 

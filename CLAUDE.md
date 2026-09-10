@@ -278,10 +278,31 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     chess.com rating in that specific game otherwise (see Phase 2.5 below)
     — the fallback is what shipped originally and is still what runs if
     `ml/models/puzzle_rating_model.joblib` is ever missing. `themes` is
-    left `null` (no motif classification in v1) — a personal puzzle moves
-    the solver's *overall* rating on attempt but not any category rating;
-    a known, accepted limitation, not a bug, if `/stats`'s category chart
-    doesn't move after solving one
+    left `null` (no motif classification in v1), so a personal puzzle never
+    moves any category rating — unchanged.
+  - **A personal puzzle no longer moves the solver's overall rating either**
+    (2026-09-10, `PuzzleAttemptController::create()`) — it originally did,
+    on the same `GlickoRatingService::recordAttempt()` path as a Lichess
+    attempt, but a personal puzzle's `rating` is a model prediction, not
+    something earned via Glicko convergence across thousands of real
+    solvers the way a Lichess puzzle's is; it's genuinely noisy (MAE ~367
+    rating points even after retraining `puzzle_rating_model` at 51k
+    examples — see Phase 2.5 below), and letting one mis-rated personal
+    puzzle swing the same overall rating Lichess attempts calibrate wasn't
+    worth it. `PuzzleAttemptController::create()` now guards the overall
+    `recordAttempt()` call on `null === $puzzle->getOwner()`;
+    `ratingChange` in the response is `null` (not `0`) for a personal
+    puzzle — a deliberately different fact than "computed to exactly
+    zero" — which the frontend's existing `ratingChange !== null` check in
+    both `PuzzleView.vue` and `MyGamesView.vue` already treated correctly,
+    so no template change was needed, only `AttemptResult.ratingChange`'s
+    TypeScript type widening to `number | null` in `api.ts`. A personal
+    puzzle's `attemptCount`/`failedAttemptCount` bookkeeping
+    (`Puzzle::recordAttempt()`, Phase 2.7) and the `PuzzleAttempt` row
+    itself are both still written unconditionally — only the *overall
+    Glicko rating* update is skipped, not attempt history or the "My
+    Games" delivery queue's own retry logic, neither of which reads
+    `User.rating` at all.
   - **Linking a chess.com account** (`User.chessComUsername`,
     `ChessComLinkController`, `GET`/`POST`/`DELETE /api/me/chess-com-link`)
     is the durable source of truth an import reads from — replacing the
