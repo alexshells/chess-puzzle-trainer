@@ -327,8 +327,30 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     solving side have one clearly-best move, or several roughly-equal
     ones). `find_blunders` calls this directly now (one extra Stockfish
     call per checked position, for the pre-setup eval) and records all
-    three on `PersonalPuzzleCandidate`, still purely descriptive — not
-    used to filter or rank candidates yet.
+    three on `PersonalPuzzleCandidate`.
+  - **`forced` and a tighter `decided_position_cp` are now hard gates in
+    `find_blunders`, not just descriptive** (2026-09-10 fix, prompted by
+    three concrete bad-candidate patterns actually observed: K+R-vs-K-style
+    "many roads lead to Rome" endgames graded against one arbitrary correct
+    line; "mate in 5 instead of mate in 3" candidates where the outcome —
+    losing — never actually changed; and forced-but-barely-so candidates
+    where it's hard to see why the "correct" move beats the alternative).
+    `find_blunders` now rejects a candidate outright when `analysis.forced`
+    is `False` — reusing the already-computed `refutation_gap_cp`/
+    `forced_gap_cp` comparison, which was being calculated and stored on
+    every candidate long before anything actually acted on it. This alone
+    fixes the "many roads lead to Rome" case: alternate mating lines of
+    different lengths differ by only a few cp under `mate_score`-scaled
+    scoring, so they were already correctly computing as *not* forced, just
+    never rejected. `decided_position_cp` (the "already lost, don't bother"
+    guard) dropped from 600 to 350 — 600cp reads as "not yet decided" right
+    up until a genuinely hopeless position, so a huge eval swing from
+    "already essentially lost" into "now literally forced mate" still
+    passed as a candidate even though the practical outcome never changed.
+    Both are still tunable knobs in `config.py`, not something derived from
+    real usage data yet — revisit after watching more real candidates.
+    `forced_gap_cp` itself (the margin required to count as forced) is
+    unchanged at 100 for now.
   - **Bootstrap training data off Lichess's own puzzles**
     (`ml/src/ml/build_training_dataset.py`): our own `puzzle_feedback` vote
     count will be small for a long time, but Lichess's `Popularity` column

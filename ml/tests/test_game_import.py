@@ -130,18 +130,22 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     assert candidate.setup_swing_cp == 200 - 15
 
 
-def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
-    # Same shape as above, but the runner-up (0) trails the best move (15)
-    # by only 15cp — well under forced_gap_cp, so several moves win here and
-    # it isn't a "there's exactly one right answer" puzzle.
+def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
+    # Same shape as the forced case above, but the runner-up (0) trails the
+    # best move (15) by only 15cp — well under forced_gap_cp, so several
+    # moves win here (the "many roads lead to Rome" case, e.g. a drawn-out
+    # K+R-vs-K mate where several moves all win, just at different speeds).
+    # Not a fair puzzle to grade against one "correct" answer, so it should
+    # be rejected outright — even though the eval swing alone clears
+    # blunder_threshold_cp (15 - (-300) = 315 >= 250).
     engine = FakeEngine(
         [
             (999, [_PV_MOVE]),  # pre-setup eval before Nf3
             [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
             (10, [_PV_MOVE]),  # after Nf3
             (100, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # puzzle position before Bxc6
-            (-300, [_PV_MOVE]),  # after Bxc6
+            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # puzzle position before Bxc6 — not forced
+            (-300, [_PV_MOVE]),  # after Bxc6 — still evaluated, forced is checked last
         ]
     )
 
@@ -159,10 +163,8 @@ def test_marks_not_forced_when_a_second_move_wins_almost_as_well():
         max_solver_moves=MAX_SOLVER_MOVES,
     )
 
-    assert len(candidates) == 1
-    assert candidates[0].forced is False
-    assert candidates[0].refutation_gap_cp == 15
-    assert candidates[0].setup_swing_cp == 100 - 15
+    assert candidates == []
+    assert engine.calls == 6
 
 
 def test_marks_forced_when_there_is_no_second_legal_reply():

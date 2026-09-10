@@ -27,13 +27,26 @@ class Settings(BaseSettings):
     blunder_threshold_cp: int = 250
     # Skip blunders piled onto an already-decided position — not an
     # interesting puzzle if one side was already winning/losing by this much.
-    decided_position_cp: int = 600
+    # 600 (the original value) was too lenient in practice: a position at,
+    # say, -590 reads as "not yet decided" by that bar alone but is already
+    # essentially hopeless for a human, so a huge eval swing from there into
+    # a forced mate ("mate in 5 instead of mate in 3") still passed as a
+    # candidate even though the practical outcome — losing — never changed.
+    # 350 (~3.5 pawns) still allows genuine comeback-blunder puzzles (a real
+    # fighting position thrown away) while catching positions that were
+    # already effectively lost regardless of which move gets played next.
+    # Empirically tunable — revisit after watching more real candidates.
+    decided_position_cp: int = 350
     # How much the best move at the puzzle position must beat the second-best
     # by (per multipv=2 analysis) to count as a "forced" — i.e. genuinely
-    # unique — refutation, not just one of several ways to win. Purely
-    # informational for now (stored on PersonalPuzzleCandidate, not used to
-    # filter candidates) — see CLAUDE.md's Phase 2.5 note on puzzle-quality
-    # feedback for why this isn't wired into a hard threshold yet.
+    # unique — refutation, not just one of several ways to win. A hard gate
+    # in find_blunders (see game_import.py): a candidate whose gap falls
+    # short of this isn't accepted at all, since "several moves work here" —
+    # a drawn-out mating sequence with many winning tries is the clearest
+    # example — isn't a fair puzzle to grade against one specific answer.
+    # Still also stored on PersonalPuzzleCandidate for the (currently
+    # unwired) delivery bandit's best_quality/forced_clean arms — see
+    # CLAUDE.md's Phase 2.5/2.6 notes.
     forced_gap_cp: int = 100
     # How many of the solver's own moves a generated puzzle's solution can
     # require, at most — a puzzle always ends on a solver move (never an

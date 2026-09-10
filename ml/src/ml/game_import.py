@@ -71,14 +71,17 @@ class BlunderCandidate:
     # same identifier as external_id/_game_id() (that's the internal uuid);
     # this is what a human actually clicks.
     game_url: str
-    # Puzzle-quality signals from puzzle_quality.py, not (yet) used to filter
-    # candidates — see config.py's forced_gap_cp. `forced=True` means the
-    # engine's top move at the puzzle position clearly beats the next-best
-    # alternative (or there simply wasn't a second legal reply);
-    # `refutation_gap_cp` is the raw margin, `None` when there was only one
-    # legal reply to compare against. `setup_swing_cp` is how much the
-    # position dropped, from the blundering side's own POV, purely from
-    # playing the setup move (last_move) — independent of what target did next.
+    # Puzzle-quality signals from puzzle_quality.py — `forced` is also a hard
+    # gate now (see find_blunders below), not just descriptive: every
+    # candidate that reaches this dataclass already had a clearly-best move,
+    # never several roughly-equal ones. `forced=True` means the engine's top
+    # move at the puzzle position clearly beats the next-best alternative
+    # (or there simply wasn't a second legal reply); `refutation_gap_cp` is
+    # the raw margin, `None` when there was only one legal reply to compare
+    # against (see config.py's forced_gap_cp for the margin used). `setup_swing_cp`
+    # is how much the position dropped, from the blundering side's own POV,
+    # purely from playing the setup move (last_move) — independent of what
+    # target did next.
     forced: bool
     refutation_gap_cp: int | None
     setup_swing_cp: int
@@ -130,6 +133,11 @@ def find_blunders(
     didn't happen in an already-lost position (a further mistake there isn't
     an interesting puzzle) — a large *winning* swing thrown away is exactly
     what this is looking for, so the decided-position skip is one-sided.
+    Also requires analyse_puzzle_quality's `forced` to be True — a candidate
+    with more than one adequate reply (refutation_gap_cp under forced_gap_cp,
+    e.g. several moves that all win a drawn-out K+R-vs-K endgame, just at
+    different speeds) isn't a fair puzzle: there's no single "the" correct
+    answer to grade against.
 
     A candidate's solution is truncated to at most max_solver_moves of the
     solver's own moves (2 * max_solver_moves - 1 plies of solving_pv) — see
@@ -186,6 +194,16 @@ def find_blunders(
                 if (
                     eval_after is not None
                     and analysis.puzzle_position_eval_cp - eval_after >= blunder_threshold_cp
+                    # A candidate needs exactly one right answer to be a fair
+                    # puzzle — reject "many roads lead to Rome" positions (a
+                    # drawn-out K+R-vs-K mate, say, where several moves all
+                    # win, just at different speeds) where the engine's own
+                    # top line is really just one arbitrary choice among
+                    # several that would all be marked "wrong" otherwise.
+                    # See puzzle_quality's forced/refutation_gap_cp — this
+                    # was computed and stored on every candidate long before
+                    # it actually gated anything.
+                    and analysis.forced
                 ):
                     max_solving_plies = 2 * max_solver_moves - 1
                     solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[:max_solving_plies]]
