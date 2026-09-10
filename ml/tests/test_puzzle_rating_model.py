@@ -7,21 +7,35 @@ from ml.puzzle_rating_model import MAX_RATING, MIN_RATING, build_feature_matrix,
 
 
 class FakeExample:
-    def __init__(self, setup_swing_cp, forced, refutation_gap_cp, rating):
+    def __init__(
+        self,
+        setup_swing_cp,
+        forced,
+        refutation_gap_cp,
+        rating,
+        puzzle_position_eval_cp=0,
+        has_decisive_payoff=True,
+        decisive_material_gain=0,
+    ):
         self.setup_swing_cp = setup_swing_cp
         self.forced = forced
         self.refutation_gap_cp = refutation_gap_cp
         self.rating = rating
+        self.puzzle_position_eval_cp = puzzle_position_eval_cp
+        self.has_decisive_payoff = has_decisive_payoff
+        self.decisive_material_gain = decisive_material_gain
 
 
 def test_build_feature_matrix_uses_only_core_features_no_rating():
-    examples = [FakeExample(300, True, 150, rating=1800)]
+    examples = [
+        FakeExample(300, True, 150, rating=1800, puzzle_position_eval_cp=20, decisive_material_gain=3)
+    ]
 
     X = build_feature_matrix(examples)
 
-    # 4 core features — rating must NOT be one of them, it's the label here.
-    assert X.shape == (1, 4)
-    assert list(X[0]) == [300.0, 1.0, 1.0, 150.0]
+    # 7 core features — rating must NOT be one of them, it's the label here.
+    assert X.shape == (1, 7)
+    assert list(X[0]) == [300.0, 1.0, 1.0, 150.0, 20.0, 1.0, 3.0]
 
 
 def test_extract_ratings_reads_raw_values_in_order():
@@ -37,7 +51,17 @@ def test_train_recovers_a_clearly_correlated_signal():
     rng = np.random.default_rng(0)
     n = 300
     swing = rng.normal(0, 200, n)
-    X = np.column_stack([swing, rng.integers(0, 2, n), rng.integers(0, 2, n), rng.normal(0, 100, n)])
+    X = np.column_stack(
+        [
+            swing,
+            rng.integers(0, 2, n),
+            rng.integers(0, 2, n),
+            rng.normal(0, 100, n),
+            rng.normal(0, 100, n),
+            rng.integers(0, 2, n),
+            rng.normal(0, 1, n),
+        ]
+    )
     noise = rng.normal(0, 50, n)
     ratings = 1500 + swing * 2 + noise
 
@@ -50,7 +74,17 @@ def test_predict_returns_a_plausible_rating_using_the_trained_pipeline():
     rng = np.random.default_rng(0)
     n = 300
     swing = rng.normal(0, 200, n)
-    X = np.column_stack([swing, rng.integers(0, 2, n), rng.integers(0, 2, n), rng.normal(0, 100, n)])
+    X = np.column_stack(
+        [
+            swing,
+            rng.integers(0, 2, n),
+            rng.integers(0, 2, n),
+            rng.normal(0, 100, n),
+            rng.normal(0, 100, n),
+            rng.integers(0, 2, n),
+            rng.normal(0, 1, n),
+        ]
+    )
     ratings = 1500 + swing * 2 + rng.normal(0, 50, n)
     pipeline, _ = train(X, ratings, test_size=0.25, seed=0)
 
@@ -67,7 +101,17 @@ def test_predict_clamps_wild_extrapolations_to_a_plausible_range():
     rng = np.random.default_rng(0)
     n = 300
     swing = rng.normal(0, 200, n)
-    X = np.column_stack([swing, rng.integers(0, 2, n), rng.integers(0, 2, n), rng.normal(0, 100, n)])
+    X = np.column_stack(
+        [
+            swing,
+            rng.integers(0, 2, n),
+            rng.integers(0, 2, n),
+            rng.normal(0, 100, n),
+            rng.normal(0, 100, n),
+            rng.integers(0, 2, n),
+            rng.normal(0, 1, n),
+        ]
+    )
     ratings = 1500 + swing * 2 + rng.normal(0, 50, n)
     pipeline, _ = train(X, ratings, test_size=0.25, seed=0)
 

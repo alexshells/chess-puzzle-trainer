@@ -208,6 +208,14 @@ class PuzzleQualityTrainingExample(Base):
     setup_swing_cp = Column(Integer, nullable=False)
     forced = Column(Boolean, nullable=False)
     refutation_gap_cp = Column(Integer, nullable=True)
+    # Added alongside puzzle_features.py's expanded feature set (see
+    # CLAUDE.md's Phase 2.5 note on turning heuristic gates into model
+    # features) — all three come straight off the same
+    # analyse_puzzle_quality() call already made for setup_swing_cp/forced/
+    # refutation_gap_cp above, no extra engine work.
+    puzzle_position_eval_cp = Column(Integer, nullable=False)
+    has_decisive_payoff = Column(Boolean, nullable=False)
+    decisive_material_gain = Column(Integer, nullable=False)
     # Raw label source: Lichess's aggregated (+1/-1) vote score, roughly
     # -100..100, and the play count behind it — kept raw rather than
     # pre-binarized so the training script can choose its own label

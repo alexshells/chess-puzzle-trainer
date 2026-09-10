@@ -1,8 +1,9 @@
 import chess
 
-from ml.puzzle_quality import analyse_puzzle_quality
+from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff
 
 FORCED_GAP_CP = 100
+DECISIVE_MATERIAL_GAIN = 1
 
 # Any legal position works — analyse_puzzle_quality doesn't inspect the
 # actual chess content, only the scripted engine responses below.
@@ -51,7 +52,12 @@ def test_computes_setup_swing_and_forced_refutation():
     )
 
     analysis = analyse_puzzle_quality(
-        FEN_BEFORE_SETUP, SETUP_MOVE, engine, depth=1, forced_gap_cp=FORCED_GAP_CP
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_gap_cp=FORCED_GAP_CP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
     assert analysis is not None
@@ -60,6 +66,9 @@ def test_computes_setup_swing_and_forced_refutation():
     assert analysis.refutation_gap_cp == 105
     assert analysis.forced is True
     assert analysis.solving_pv == [_PV_MOVE]
+    # e7e5 (the scripted "best line") doesn't capture anything — no payoff.
+    assert analysis.has_decisive_payoff is False
+    assert analysis.decisive_material_gain == 0
 
 
 def test_not_forced_when_runner_up_is_close():
@@ -71,7 +80,12 @@ def test_not_forced_when_runner_up_is_close():
     )
 
     analysis = analyse_puzzle_quality(
-        FEN_BEFORE_SETUP, SETUP_MOVE, engine, depth=1, forced_gap_cp=FORCED_GAP_CP
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_gap_cp=FORCED_GAP_CP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
     assert analysis is not None
@@ -88,7 +102,12 @@ def test_forced_when_no_second_legal_reply():
     )
 
     analysis = analyse_puzzle_quality(
-        FEN_BEFORE_SETUP, SETUP_MOVE, engine, depth=1, forced_gap_cp=FORCED_GAP_CP
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_gap_cp=FORCED_GAP_CP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
     assert analysis is not None
@@ -103,8 +122,113 @@ def test_returns_none_when_setup_position_has_no_legal_moves():
     engine = FakeEngine([])
 
     analysis = analyse_puzzle_quality(
-        checkmate_fen, "f1g2", engine, depth=1, forced_gap_cp=FORCED_GAP_CP
+        checkmate_fen,
+        "f1g2",
+        engine,
+        depth=1,
+        forced_gap_cp=FORCED_GAP_CP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
     assert analysis is None
     assert engine.calls == 0
+
+
+def test_computes_a_decisive_payoff_when_the_best_line_actually_wins_material():
+    # A queen-and-mate-material blunder scenario: White (solver) forks
+    # Black's king and queen with Nf6+, then wins the queen with Nxd7.
+    engine = FakeEngine(
+        [
+            (999, [_PV_MOVE]),  # pre-setup eval (unused by this test)
+            [
+                (
+                    15,
+                    [chess.Move.from_uci("h5f6"), chess.Move.from_uci("e8f8"), chess.Move.from_uci("f6d7")],
+                )
+            ],
+        ]
+    )
+
+    analysis = analyse_puzzle_quality(
+        "4k3/p2q4/8/7N/8/8/7R/5K2 b - - 1 1",
+        "a7a6",
+        engine,
+        depth=1,
+        forced_gap_cp=FORCED_GAP_CP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+    )
+
+    assert analysis is not None
+    assert analysis.has_decisive_payoff is True
+    assert analysis.decisive_material_gain == 9  # the queen, net of nothing lost
+
+
+# --- find_decisive_payoff (moved here from game_import.py once it became a
+# shared feature used by both training and inference — see puzzle_quality.py) ---
+
+_FORK_FEN = "4k3/3q4/p7/7N/8/8/7R/5K2 w - - 0 2"
+_FORK_MOVES = [chess.Move.from_uci("h5f6"), chess.Move.from_uci("e8f8"), chess.Move.from_uci("f6d7")]
+_QUIET_MOVES = [
+    chess.Move.from_uci("h5g3"),
+    chess.Move.from_uci("a6a5"),
+    chess.Move.from_uci("g3h5"),
+    chess.Move.from_uci("a5a4"),
+    chess.Move.from_uci("h5g3"),
+]
+_MATE_FEN = "7k/5ppp/1p6/8/8/8/R7/5K2 w - - 0 2"
+_MATE_MOVES = [chess.Move.from_uci("a2a8")]
+
+
+def test_find_decisive_payoff_reaches_material_gain_at_the_second_solver_move():
+    board = chess.Board(_FORK_FEN)
+
+    payoff = find_decisive_payoff(board, chess.WHITE, _FORK_MOVES, decisive_material_gain=DECISIVE_MATERIAL_GAIN)
+
+    assert payoff.reached is True
+    assert payoff.material_gain == 9
+    assert payoff.ply_index == 2  # Nf6 (check only), Kf8 (reply), Nxd7 (the payoff)
+
+
+def test_find_decisive_payoff_reaches_checkmate_immediately():
+    board = chess.Board(_MATE_FEN)
+
+    payoff = find_decisive_payoff(board, chess.WHITE, _MATE_MOVES, decisive_material_gain=DECISIVE_MATERIAL_GAIN)
+
+    assert payoff.reached is True
+    assert payoff.ply_index == 0
+
+
+def test_find_decisive_payoff_never_reached_for_a_quiet_shuffle():
+    board = chess.Board(_FORK_FEN)
+
+    payoff = find_decisive_payoff(board, chess.WHITE, _QUIET_MOVES, decisive_material_gain=DECISIVE_MATERIAL_GAIN)
+
+    assert payoff.reached is False
+    assert payoff.material_gain == 0
+    assert payoff.ply_index is None
+
+
+def test_find_decisive_payoff_respects_max_plies():
+    board = chess.Board(_FORK_FEN)
+
+    # The real payoff is at ply_index=2, but a budget of 1 only allows the
+    # check itself — not enough to see the queen actually get won.
+    payoff = find_decisive_payoff(
+        board, chess.WHITE, _FORK_MOVES, decisive_material_gain=DECISIVE_MATERIAL_GAIN, max_plies=1
+    )
+
+    assert payoff.reached is False
+
+
+def test_find_decisive_payoff_only_checks_after_solver_moves():
+    # A capture by the opponent (an odd index — an auto-played reply) must
+    # never itself trigger a payoff, even though it changes the material
+    # balance — here it makes things *worse* for the solver, but the point
+    # is the parity check, not the sign.
+    board = chess.Board("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1")  # White Qd1/Ke1, Black Ke8/pawn d5
+    moves = [chess.Move.from_uci("d1d5"), chess.Move.from_uci("e8f8")]  # Qxd5 (payoff), then a quiet king move
+
+    payoff = find_decisive_payoff(board, chess.WHITE, moves, decisive_material_gain=DECISIVE_MATERIAL_GAIN)
+
+    assert payoff.reached is True
+    assert payoff.ply_index == 0  # found right after Qxd5, not walked further

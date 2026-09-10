@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, ScannedGame, SessionLocal
-from ml.puzzle_quality import analyse_puzzle_quality
+from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff
 from ml.puzzle_quality_model import predict as predict_quality
 from ml.puzzle_quality_model import try_load as try_load_quality_model
 from ml.puzzle_rating_model import predict as predict_rating
@@ -124,25 +124,43 @@ def find_blunders(
     decided_position_cp: int,
     forced_gap_cp: int,
     max_solver_moves: int,
+    decisive_material_gain: int,
+    quality_score_threshold: float,
     rating_model: Pipeline | None = None,
     quality_model: Pipeline | None = None,
 ) -> list[BlunderCandidate]:
     """
     Walks one game, evaluating the position before and after every move the
     target player made. A candidate is a swing >= blunder_threshold_cp that
-    didn't happen in an already-lost position (a further mistake there isn't
-    an interesting puzzle) — a large *winning* swing thrown away is exactly
-    what this is looking for, so the decided-position skip is one-sided.
-    Also requires analyse_puzzle_quality's `forced` to be True — a candidate
-    with more than one adequate reply (refutation_gap_cp under forced_gap_cp,
-    e.g. several moves that all win a drawn-out K+R-vs-K endgame, just at
-    different speeds) isn't a fair puzzle: there's no single "the" correct
-    answer to grade against.
+    didn't happen in an extremely decided position (decided_position_cp is
+    a loose compute-saving sanity check now, not the real quality judgment
+    — see config.py). Also requires analyse_puzzle_quality's `forced` to be
+    True — a candidate with more than one adequate reply (refutation_gap_cp
+    under forced_gap_cp, e.g. several moves that all win a drawn-out
+    K+R-vs-K endgame, just at different speeds) isn't a fair puzzle: there's
+    no single "the" correct answer to grade against. Both of these are hard
+    gates — closer to logical requirements than preferences a model should
+    override.
 
     A candidate's solution is truncated to at most max_solver_moves of the
     solver's own moves (2 * max_solver_moves - 1 plies of solving_pv) — see
-    config.py's max_solver_moves. Always ends on a solver move, never an
-    auto-played reply (ChessBoard.vue expects that; see its handleMove()).
+    config.py's max_solver_moves — and, within that budget, cut early the
+    moment it reaches a concrete payoff (checkmate, or decisive_material_gain
+    of real material actually won), via puzzle_quality.find_decisive_payoff,
+    rather than padding out further with moves that don't give the solver
+    anything to verify. A candidate whose solving_pv never reaches such a
+    payoff within the ply budget is rejected outright. Always ends on a
+    solver move, never an auto-played reply (ChessBoard.vue expects that;
+    see its handleMove()).
+
+    When quality_model is given, a candidate is also rejected if its
+    predicted quality_score falls below quality_score_threshold — the real
+    "is this actually a good puzzle" judgment, learned from thousands of
+    real Lichess puzzles rather than a hand-picked cp/pawn cutoff (see
+    puzzle_quality_model.py and CLAUDE.md's Phase 2.5 note). Without a
+    trained model file, this gate is skipped entirely — forced +
+    decisive-payoff are the only gates in that case, same as before this
+    model existed.
 
     rating_model, if given, predicts each candidate's rating from position
     features (puzzle_rating_model.py) instead of falling back to the
@@ -178,7 +196,12 @@ def find_blunders(
 
         if board.turn == target_color and last_move is not None and fen_before_last_move is not None:
             analysis = analyse_puzzle_quality(
-                fen_before_last_move, last_move.uci(), engine, depth=depth, forced_gap_cp=forced_gap_cp
+                fen_before_last_move,
+                last_move.uci(),
+                engine,
+                depth=depth,
+                forced_gap_cp=forced_gap_cp,
+                decisive_material_gain=decisive_material_gain,
             )
 
             if (
@@ -206,7 +229,14 @@ def find_blunders(
                     and analysis.forced
                 ):
                     max_solving_plies = 2 * max_solver_moves - 1
-                    solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[:max_solving_plies]]
+                    payoff = find_decisive_payoff(
+                        board,
+                        target_color,
+                        analysis.solving_pv,
+                        decisive_material_gain=decisive_material_gain,
+                        max_plies=max_solving_plies,
+                    )
+
                     rating = (
                         round(predict_rating(rating_model, analysis))
                         if rating_model is not None
@@ -215,28 +245,37 @@ def find_blunders(
                     quality_score = (
                         predict_quality(quality_model, analysis, rating) if quality_model is not None else None
                     )
-                    candidates.append(
-                        BlunderCandidate(
-                            fen=fen_before_last_move,
-                            solution=solution,
-                            external_id=f"chesscom:{game_id}:{ply}",
-                            rating=rating,
-                            # chess.com's live game viewer supports a
-                            # ?move={ply} deep link (verified live against a
-                            # real game — 0 = starting position, N = the
-                            # position after N plies), and ply here is
-                            # exactly "how many plies played up to and
-                            # including last_move" — i.e. the puzzle's own
-                            # starting position. Appending it here means
-                            # every consumer of game_url gets the deep link
-                            # for free, no ply parsing required downstream.
-                            game_url=f"{game_url}?move={ply}",
-                            quality_score=quality_score,
-                            forced=analysis.forced,
-                            refutation_gap_cp=analysis.refutation_gap_cp,
-                            setup_swing_cp=analysis.setup_swing_cp,
+                    # The real "is this a good puzzle" judgment, learned
+                    # from real Lichess-scale data, once a trained model is
+                    # available — replaces what used to be a hand-picked
+                    # material-amount cutoff alone. Without a model, payoff
+                    # having been reached at all is still required (below).
+                    quality_gate_passed = quality_score is None or quality_score >= quality_score_threshold
+
+                    if payoff.reached and quality_gate_passed:
+                        solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[: payoff.ply_index + 1]]
+                        candidates.append(
+                            BlunderCandidate(
+                                fen=fen_before_last_move,
+                                solution=solution,
+                                external_id=f"chesscom:{game_id}:{ply}",
+                                rating=rating,
+                                # chess.com's live game viewer supports a
+                                # ?move={ply} deep link (verified live against a
+                                # real game — 0 = starting position, N = the
+                                # position after N plies), and ply here is
+                                # exactly "how many plies played up to and
+                                # including last_move" — i.e. the puzzle's own
+                                # starting position. Appending it here means
+                                # every consumer of game_url gets the deep link
+                                # for free, no ply parsing required downstream.
+                                game_url=f"{game_url}?move={ply}",
+                                quality_score=quality_score,
+                                forced=analysis.forced,
+                                refutation_gap_cp=analysis.refutation_gap_cp,
+                                setup_swing_cp=analysis.setup_swing_cp,
+                            )
                         )
-                    )
 
         fen_before_last_move = board.fen()
         board.push(move)
@@ -443,6 +482,8 @@ def _process_one_game(
         decided_position_cp=settings.decided_position_cp,
         forced_gap_cp=settings.forced_gap_cp,
         max_solver_moves=settings.max_solver_moves,
+        decisive_material_gain=settings.decisive_material_gain,
+        quality_score_threshold=settings.quality_score_threshold,
         rating_model=rating_model,
         quality_model=quality_model,
     )

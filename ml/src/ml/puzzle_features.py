@@ -20,15 +20,34 @@ from sqlalchemy import select
 from ml.db import PuzzleQualityTrainingExample, SessionLocal
 from ml.puzzle_quality import PuzzleQualityAnalysis
 
-CORE_FEATURE_NAMES = ["setup_swing_cp", "forced", "has_second_line", "refutation_gap_cp"]
+CORE_FEATURE_NAMES = [
+    "setup_swing_cp",
+    "forced",
+    "has_second_line",
+    "refutation_gap_cp",
+    "puzzle_position_eval_cp",
+    "has_decisive_payoff",
+    "decisive_material_gain",
+]
 
 
-def core_features(setup_swing_cp: float, forced: bool, refutation_gap_cp: float | None) -> list[float]:
+def core_features(
+    setup_swing_cp: float,
+    forced: bool,
+    refutation_gap_cp: float | None,
+    puzzle_position_eval_cp: float,
+    has_decisive_payoff: bool,
+    decisive_material_gain: float,
+) -> list[float]:
     """
     refutation_gap_cp is None when there was no second legal reply to compare
     against (trivially forced) — imputed to 0 with a separate has_second_line
     flag rather than dropped, so "no runner-up at all" stays distinguishable
-    from "runner-up was exactly as good".
+    from "runner-up was exactly as good". puzzle_position_eval_cp lets a
+    model learn its own "how decided is too decided" boundary instead of a
+    hand-picked cp cutoff; has_decisive_payoff/decisive_material_gain do the
+    same for "does the solving line actually go anywhere concrete" — see
+    puzzle_quality.py's find_decisive_payoff.
     """
     has_second_line = refutation_gap_cp is not None
     return [
@@ -36,17 +55,34 @@ def core_features(setup_swing_cp: float, forced: bool, refutation_gap_cp: float 
         1.0 if forced else 0.0,
         1.0 if has_second_line else 0.0,
         float(refutation_gap_cp) if has_second_line else 0.0,
+        float(puzzle_position_eval_cp),
+        1.0 if has_decisive_payoff else 0.0,
+        float(decisive_material_gain),
     ]
 
 
 def core_features_from_analysis(analysis: PuzzleQualityAnalysis) -> list[float]:
     """Inference-time path — a live analyse_puzzle_quality() result, no DB row involved."""
-    return core_features(analysis.setup_swing_cp, analysis.forced, analysis.refutation_gap_cp)
+    return core_features(
+        analysis.setup_swing_cp,
+        analysis.forced,
+        analysis.refutation_gap_cp,
+        analysis.puzzle_position_eval_cp,
+        analysis.has_decisive_payoff,
+        analysis.decisive_material_gain,
+    )
 
 
 def core_features_from_example(example: PuzzleQualityTrainingExample) -> list[float]:
     """Training-time path — a persisted example (see build_training_dataset.py)."""
-    return core_features(example.setup_swing_cp, example.forced, example.refutation_gap_cp)
+    return core_features(
+        example.setup_swing_cp,
+        example.forced,
+        example.refutation_gap_cp,
+        example.puzzle_position_eval_cp,
+        example.has_decisive_payoff,
+        example.decisive_material_gain,
+    )
 
 
 def build_core_feature_matrix(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:

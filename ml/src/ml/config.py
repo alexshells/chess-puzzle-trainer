@@ -25,18 +25,17 @@ class Settings(BaseSettings):
     max_games_per_run: int = 50
     stockfish_depth: int = 12
     blunder_threshold_cp: int = 250
-    # Skip blunders piled onto an already-decided position — not an
-    # interesting puzzle if one side was already winning/losing by this much.
-    # 600 (the original value) was too lenient in practice: a position at,
-    # say, -590 reads as "not yet decided" by that bar alone but is already
-    # essentially hopeless for a human, so a huge eval swing from there into
-    # a forced mate ("mate in 5 instead of mate in 3") still passed as a
-    # candidate even though the practical outcome — losing — never changed.
-    # 350 (~3.5 pawns) still allows genuine comeback-blunder puzzles (a real
-    # fighting position thrown away) while catching positions that were
-    # already effectively lost regardless of which move gets played next.
-    # Empirically tunable — revisit after watching more real candidates.
-    decided_position_cp: int = 350
+    # Skip blunders piled onto an *extremely* decided position (a real mate
+    # sequence already on the board, say) — purely a compute-saving sanity
+    # check now, not the actual "was this practically already lost" quality
+    # judgment. That nuance (a position at -400, say, being essentially
+    # hopeless for a human even though it's not literally decided) used to
+    # need a hand-picked cp cutoff here; now it's puzzle_position_eval_cp,
+    # one of the model's own features (see puzzle_features.py), so the
+    # model learns its own boundary from real Lichess-scale data instead of
+    # a guessed number. Kept loose on purpose — this only exists to avoid
+    # wasting a Stockfish "after" call on a position that's obviously over.
+    decided_position_cp: int = 600
     # How much the best move at the puzzle position must beat the second-best
     # by (per multipv=2 analysis) to count as a "forced" — i.e. genuinely
     # unique — refutation, not just one of several ways to win. A hard gate
@@ -55,6 +54,27 @@ class Settings(BaseSettings):
     # solver). Kept modest on purpose: a very long forced sequence starts to
     # feel like "convert a winning endgame" rather than "spot the tactic".
     max_solver_moves: int = 3
+    # How much real material (standard pawn-equivalent values — a pawn is 1,
+    # a minor piece 3, etc.) counts as a genuine "payoff" for
+    # find_decisive_payoff (puzzle_quality.py) — checkmate always counts
+    # regardless. Two uses: analyse_puzzle_quality uses it (unbounded, over
+    # the whole solving_pv) to compute the has_decisive_payoff/
+    # decisive_material_gain *features* the quality model trains on and
+    # scores candidates with; find_blunders separately uses the same
+    # function (bounded by max_solver_moves) to decide where to cut the
+    # *shown* solution short, so a puzzle doesn't pad out with moves that
+    # don't add anything a solver can verify once the real payoff already
+    # landed. 1 means "any real material, even a single pawn, counts".
+    decisive_material_gain: int = 1
+    # find_blunders rejects a candidate whose quality_model-predicted
+    # quality_score falls below this — the model's own median-split
+    # training framing ("more/less popular than its peers in this sample")
+    # makes 0.5 the natural default: "better than the median Lichess
+    # puzzle". Only applies when a trained quality model file is actually
+    # available (see puzzle_quality_model.try_load) — no model means no
+    # score to threshold, and find_blunders falls back to its simpler
+    # forced+decisive-payoff gates alone, same as before this model existed.
+    quality_score_threshold: float = 0.5
 
     # Delivery bandit (see delivery_bandit.py) — Bayesian linear regression
     # per arm over a 1-5 star reward. noise_variance is the assumed spread

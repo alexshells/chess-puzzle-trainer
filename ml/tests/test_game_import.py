@@ -4,6 +4,21 @@ testable without a real engine — same spirit as test_weakness.py keeping
 compute_theme_weaknesses testable without a real DB. The fake engine below
 returns a pre-programmed eval per call rather than actually analysing the
 position, so a test controls exactly which move looks like a blunder.
+
+Eval numbers are entirely scripted (FakeScore ignores the real position),
+but any move that find_blunders or puzzle_quality.find_decisive_payoff
+actually *pushes* onto a board — the real game's own moves, and a
+candidate's solving_pv once it's accepted — has to be a real legal move,
+since both now walk a real chess.Board. Most fixtures below use one small
+custom position (a white knight fork of a king+queen, from a fixed FEN)
+rather than a real opening, so the "solving line" itself is a genuine,
+verifiable tactic rather than a placeholder move repeated for its UCI shape
+alone.
+
+quality_model tests here cover find_blunders' own gating logic (does it
+reject/accept based on a given quality_score); the model's own prediction
+behavior is puzzle_quality_model.py's test file's job, not this one's — a
+FakeQualityModel below returns a fixed probability by construction.
 """
 
 import chess
@@ -14,17 +29,72 @@ from ml.game_import import _select_games_to_process, find_blunders
 TARGET = "player_one"
 FORCED_GAP_CP = 100
 MAX_SOLVER_MOVES = 3
+DECISIVE_MATERIAL_GAIN = 1
+QUALITY_SCORE_THRESHOLD = 0.5
 
 # 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 — White ("player_one") "blunders" on move 3
 # per the fake engine's scripted evals below; the actual chess content only
-# needs to be a legal game, not a real blunder.
+# needs to be a legal game, not a real blunder. Used only by tests that
+# never reach solving_pv's legality-sensitive code path (forced=False or
+# already-decided rejections happen before any candidate is built).
 GAME_PGN = """[White "player_one"]
 [Black "player_two"]
 
 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 *
 """
 
-_PV_MOVE = chess.Move.from_uci("e2e4")
+_PV_MOVE = chess.Move.from_uci("e2e4")  # placeholder — legal only from the starting position; never used as a best-line pv
+# Legal single-move "best lines" for GAME_PGN's two checkpoints specifically
+# (after 1.e4 e5, and after 1.e4 e5 2.Nf3 Nc6) — analyse_puzzle_quality now
+# always walks a candidate's best-line pv (for the decisive-payoff feature)
+# regardless of what find_blunders' gates end up doing with the result, so
+# even a "this gets rejected anyway" fixture needs a real legal move there.
+_CP1_MOVE = chess.Move.from_uci("g1f3")  # Nf3, legal after 1.e4 e5
+_CP2_MOVE = chess.Move.from_uci("f1c4")  # Bc4, legal after 1.e4 e5 2.Nf3 Nc6
+
+# --- Knight-fork scenario ---
+# White: Ke1, Nh5, Rh2. Black: Ke8, Qd7, Pa7. White's knight forks the king
+# (check) and queen via Nf6; the queen is undefended, so Nxd7 next wins it
+# outright. One checkpoint (before White's 2nd move): last_move = Black's a6
+# (an unrelated filler move, same "narrative doesn't need to match the real
+# tactic" as the original placeholder-PV tests — only legality matters).
+_FORK_FEN = "4k3/p2q4/8/7N/8/8/7R/4K3 w - - 0 1"
+_FORK_PGN = f"""[White "player_one"]
+[Black "player_two"]
+[FEN "{_FORK_FEN}"]
+[SetUp "1"]
+
+1. Kf1 a6 2. Rh4 *
+"""
+_FORK_MOVE = chess.Move.from_uci("h5f6")  # check, no capture — not decisive by itself
+_FORK_REPLY = chess.Move.from_uci("e8f8")  # Black's only-ish reply to the check
+_FORK_CAPTURE = chess.Move.from_uci("f6d7")  # Nxd7 — wins the queen, decisive
+_FORK_PV = [_FORK_MOVE, _FORK_REPLY, _FORK_CAPTURE]
+
+# A quiet shuffle from the exact same checkpoint that never captures
+# anything or gives mate — used to test that a candidate with no concrete
+# payoff anywhere in its solving line gets rejected outright.
+_QUIET_PV = [
+    chess.Move.from_uci("h5g3"),
+    chess.Move.from_uci("a6a5"),
+    chess.Move.from_uci("g3h5"),
+    chess.Move.from_uci("a5a4"),
+    chess.Move.from_uci("h5g3"),
+]
+
+# --- Back-rank mate scenario ---
+# White: Ke1, Ra2. Black: Kh8, Pb7/Pf7/Pg7/Ph7 (boxed in). Ra8 is mate — the
+# whole 8th rank (including g8, Black king's only nominal escape) is covered
+# by the rook, and f7/g7/h7 block every other square.
+_MATE_FEN = "7k/1p3ppp/8/8/8/8/R7/4K3 w - - 0 1"
+_MATE_PGN = f"""[White "player_one"]
+[Black "player_two"]
+[FEN "{_MATE_FEN}"]
+[SetUp "1"]
+
+1. Kf1 b6 2. Ra3 *
+"""
+_MATE_MOVE = chess.Move.from_uci("a2a8")
 
 
 class FakeScore:
@@ -83,25 +153,10 @@ class FakeQualityModel:
         return np.array([[1 - self._probability, self._probability]])
 
 
-def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
-    # White's move 2 (Nf3): small drop, below threshold — not a blunder.
-    # White's move 3 (Bxc6): puzzle-position eval drops from +15 to -300, a
-    # 315cp swing, and the runner-up move (-90) trails the best move (15) by
-    # 105cp — over the 100cp forced_gap_cp, so this counts as forced.
-    engine = FakeEngine(
-        [
-            (999, [_PV_MOVE]),  # pre-setup eval before Nf3 (unused by assertions)
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3 (multipv=2)
-            (10, [_PV_MOVE]),  # after Nf3
-            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # puzzle position before Bxc6 (multipv=2)
-            (-300, [_PV_MOVE]),  # after Bxc6
-        ]
-    )
-
-    candidates = find_blunders(
-        GAME_PGN,
-        TARGET,
+def _find_fork_blunders(engine: FakeEngine, **overrides):
+    kwargs = dict(
+        pgn_text=_FORK_PGN,
+        target_username=TARGET,
         player_rating=1200,
         game_id="test-game",
         game_url="https://www.chess.com/game/live/12345",
@@ -111,20 +166,37 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
         max_solver_moves=MAX_SOLVER_MOVES,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        quality_score_threshold=QUALITY_SCORE_THRESHOLD,
     )
+    kwargs.update(overrides)
+    return find_blunders(**kwargs)
+
+
+def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
+    # Puzzle-position eval drops from +15 (best line: the fork) to -300 (what
+    # White actually played, Rh4) — a 315cp swing, over blunder_threshold_cp.
+    # The runner-up move (-90) trails the best move (15) by 105cp — over the
+    # 100cp forced_gap_cp, so this counts as forced.
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),  # pre-setup eval before Rh4 (unused by assertions)
+            [(15, _FORK_PV), (-90, [_PV_MOVE])],  # puzzle position (multipv=2) — best line is the fork
+            (-300, [_PV_MOVE]),  # after Rh4 (the actual blunder)
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
 
     assert len(candidates) == 1
     candidate = candidates[0]
-    assert candidate.external_id == "chesscom:test-game:4"
-    # ?move=4 matches external_id's ply (4) — verified live against a real
-    # chess.com game that this deep-links to the puzzle's exact starting
-    # position, not just the game (see game_import.py's game_url comment).
-    assert candidate.game_url == "https://www.chess.com/game/live/12345?move=4"
+    assert candidate.external_id == "chesscom:test-game:2"
+    assert candidate.game_url == "https://www.chess.com/game/live/12345?move=2"
     assert candidate.rating == 1200
-    # solution[0] is the opponent's move (Nc6) that led into the puzzle
-    # position; solution[1:] is the engine's suggested line from there.
-    assert candidate.solution[0] == "b8c6"
-    assert candidate.solution[1] == "e2e4"
+    # solution[0] is the opponent's move (a6) that led into the puzzle
+    # position; solution[1:] is the engine's suggested line from there —
+    # the fork, its reply, and the capture that actually wins the queen.
+    assert candidate.solution == ["a7a6", "h5f6", "e8f8", "f6d7"]
     assert candidate.forced is True
     assert candidate.refutation_gap_cp == 105
     assert candidate.setup_swing_cp == 200 - 15
@@ -137,14 +209,17 @@ def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
     # K+R-vs-K mate where several moves all win, just at different speeds).
     # Not a fair puzzle to grade against one "correct" answer, so it should
     # be rejected outright — even though the eval swing alone clears
-    # blunder_threshold_cp (15 - (-300) = 315 >= 250).
+    # blunder_threshold_cp (15 - (-300) = 315 >= 250). Never reaches
+    # find_blunders' own decisive-payoff gate (rejected on forced first),
+    # but analyse_puzzle_quality always walks the best-line pv regardless —
+    # see _CP1_MOVE/_CP2_MOVE.
     engine = FakeEngine(
         [
             (999, [_PV_MOVE]),  # pre-setup eval before Nf3
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
+            [(20, [_CP1_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
             (10, [_PV_MOVE]),  # after Nf3
             (100, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # puzzle position before Bxc6 — not forced
+            [(15, [_CP2_MOVE]), (0, [_PV_MOVE])],  # puzzle position before Bxc6 — not forced
             (-300, [_PV_MOVE]),  # after Bxc6 — still evaluated, forced is checked last
         ]
     )
@@ -161,6 +236,8 @@ def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
         max_solver_moves=MAX_SOLVER_MOVES,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        quality_score_threshold=QUALITY_SCORE_THRESHOLD,
     )
 
     assert candidates == []
@@ -172,72 +249,92 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
     # trivially forced, with no gap to report.
     engine = FakeEngine(
         [
-            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
-            [(20, [_PV_MOVE])],  # puzzle position before Nf3 — single line
-            (10, [_PV_MOVE]),  # after Nf3
-            (50, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, [_PV_MOVE])],  # puzzle position before Bxc6 — single line
-            (-300, [_PV_MOVE]),  # after Bxc6
+            (50, [_PV_MOVE]),  # pre-setup eval before Rh4
+            [(15, _FORK_PV)],  # puzzle position — single line
+            (-300, [_PV_MOVE]),  # after Rh4
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
+
+    assert len(candidates) == 1
+    assert candidates[0].forced is True
+    assert candidates[0].refutation_gap_cp is None
+    assert candidates[0].setup_swing_cp == 50 - 15
+    assert candidates[0].solution == ["a7a6", "h5f6", "e8f8", "f6d7"]
+
+
+def test_cuts_the_solution_short_once_a_decisive_payoff_is_reached():
+    # The engine's own line runs two moves past the queen capture (padding
+    # that doesn't add anything a solver can verify) — max_solver_moves=3
+    # would allow all 5 plies, but the solution should stop right after
+    # Nxd7 wins the queen, not pad out to the full budget.
+    long_pv = _FORK_PV + [chess.Move.from_uci("e2e4"), chess.Move.from_uci("e7e5")]
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, long_pv), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
+
+    assert len(candidates) == 1
+    assert candidates[0].solution == ["a7a6", "h5f6", "e8f8", "f6d7"]
+
+
+def test_rejects_a_candidate_when_the_solving_line_never_reaches_a_concrete_payoff():
+    # Same forced/blunder shape as the flagging test above, but the "best
+    # line" is a quiet shuffle that never captures anything or gives mate —
+    # winning the eval argument on paper isn't the same as a puzzle with an
+    # actual, checkable payoff (the real complaint this fixes: a puzzle
+    # whose first move wins a pawn but whose remaining moves have "no
+    # concrete plan"). Should be rejected outright.
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, _QUIET_PV), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
+
+    assert candidates == []
+
+
+def test_solution_ends_the_moment_checkmate_is_delivered():
+    # White's actual move (Ra3) misses a back-rank mate (Ra8#) that was
+    # sitting right there — about as decisive a payoff as a puzzle gets, and
+    # it should end the solution immediately (one solver move), not require
+    # anything further.
+    engine = FakeEngine(
+        [
+            (999, [_PV_MOVE]),  # pre-setup eval before Ra3 (unused)
+            [(99_997, [_MATE_MOVE])],  # puzzle position — single line, mate
+            (100, [_PV_MOVE]),  # after Ra3 (the actual blunder)
         ]
     )
 
     candidates = find_blunders(
-        GAME_PGN,
+        _MATE_PGN,
         TARGET,
         player_rating=1200,
-        game_id="test-game",
-        game_url="https://www.chess.com/game/live/12345",
+        game_id="mate-game",
+        game_url="https://www.chess.com/game/live/99999",
         engine=engine,
         depth=1,
         blunder_threshold_cp=250,
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
         max_solver_moves=MAX_SOLVER_MOVES,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        quality_score_threshold=QUALITY_SCORE_THRESHOLD,
     )
 
     assert len(candidates) == 1
-    assert candidates[0].forced is True
-    assert candidates[0].refutation_gap_cp is None
-    assert candidates[0].setup_swing_cp == 50 - 15
-
-
-def test_truncates_the_solution_to_max_solver_moves():
-    # A 7-ply PV would otherwise mean 4 solver moves — more than
-    # MAX_SOLVER_MOVES (3) allows, so it should be cut to 2*3-1=5 plies,
-    # ending on the solver's 3rd move rather than running further.
-    long_pv = [chess.Move.from_uci(uci) for uci in ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "d2d3"]]
-    engine = FakeEngine(
-        [
-            (999, [_PV_MOVE]),  # pre-setup eval before Nf3 (unused)
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3 — small swing, not a candidate
-            (10, [_PV_MOVE]),  # after Nf3
-            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, long_pv), (-90, long_pv)],  # puzzle position before Bxc6 (multipv=2) — long_pv is the best line
-            (-300, [_PV_MOVE]),  # after Bxc6
-        ]
-    )
-
-    candidates = find_blunders(
-        GAME_PGN,
-        TARGET,
-        player_rating=1200,
-        game_id="test-game",
-        game_url="https://www.chess.com/game/live/12345",
-        engine=engine,
-        depth=1,
-        blunder_threshold_cp=250,
-        decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
-        max_solver_moves=3,
-    )
-
-    assert len(candidates) == 1
-    # solution[0] is the opponent's setup move; solution[1:] is capped at 5
-    # (2*3-1) of long_pv's 7 moves — ending on a solver move (index 4 = the
-    # 3rd solver move: solver, reply, solver, reply, solver).
-    solution = candidates[0].solution
-    assert len(solution) == 1 + 5
-    assert solution[1:] == ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"]
+    assert candidates[0].solution == ["b7b6", "a2a8"]
 
 
 def test_skips_blunders_in_an_already_lost_position():
@@ -246,13 +343,16 @@ def test_skips_blunders_in_an_already_lost_position():
     # eval still drops by more than the threshold. The guard fails right
     # after the puzzle-position multipv call, so no "after" call happens for
     # that iteration (only 5 of the 6 scripted responses get consumed).
+    # Rejected before find_blunders' own decisive-payoff gate is reached, but
+    # analyse_puzzle_quality always walks the best-line pv regardless of that
+    # later rejection — see _CP1_MOVE/_CP2_MOVE.
     engine = FakeEngine(
         [
             (10, [_PV_MOVE]),  # pre-setup eval, iteration 1
-            [(0, [_PV_MOVE]), (-5, [_PV_MOVE])],  # puzzle position, iteration 1
+            [(0, [_CP1_MOVE]), (-5, [_PV_MOVE])],  # puzzle position, iteration 1
             (0, [_PV_MOVE]),  # after, iteration 1 — no swing, no candidate
             (-650, [_PV_MOVE]),  # pre-setup eval, iteration 2 (unused by assertions)
-            [(-700, [_PV_MOVE]), (-750, [_PV_MOVE])],  # puzzle position, iteration 2 — already lost
+            [(-700, [_CP2_MOVE]), (-750, [_PV_MOVE])],  # puzzle position, iteration 2 — already lost
             (-1000, [_PV_MOVE]),  # never consumed — guard fails before this would be called
         ]
     )
@@ -269,6 +369,8 @@ def test_skips_blunders_in_an_already_lost_position():
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
         max_solver_moves=MAX_SOLVER_MOVES,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        quality_score_threshold=QUALITY_SCORE_THRESHOLD,
     )
 
     assert candidates == []
@@ -277,29 +379,13 @@ def test_skips_blunders_in_an_already_lost_position():
 def test_uses_the_rating_model_when_given_instead_of_player_rating():
     engine = FakeEngine(
         [
-            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
-            (10, [_PV_MOVE]),  # after Nf3
-            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # puzzle position before Bxc6
-            (-300, [_PV_MOVE]),  # after Bxc6
+            (200, [_PV_MOVE]),
+            [(15, _FORK_PV), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
         ]
     )
 
-    candidates = find_blunders(
-        GAME_PGN,
-        TARGET,
-        player_rating=1200,
-        game_id="test-game",
-        game_url="https://www.chess.com/game/live/12345",
-        engine=engine,
-        depth=1,
-        blunder_threshold_cp=250,
-        decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
-        max_solver_moves=MAX_SOLVER_MOVES,
-        rating_model=FakeRatingModel(1837.6),
-    )
+    candidates = _find_fork_blunders(engine, rating_model=FakeRatingModel(1837.6))
 
     assert len(candidates) == 1
     # Rounded model output, not player_rating (1200) — the model was provided.
@@ -309,29 +395,13 @@ def test_uses_the_rating_model_when_given_instead_of_player_rating():
 def test_computes_quality_score_when_a_quality_model_is_given():
     engine = FakeEngine(
         [
-            (999, [_PV_MOVE]),  # pre-setup eval before Nf3
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],  # puzzle position before Nf3
-            (10, [_PV_MOVE]),  # after Nf3
-            (200, [_PV_MOVE]),  # pre-setup eval before Bxc6
-            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # puzzle position before Bxc6
-            (-300, [_PV_MOVE]),  # after Bxc6
+            (200, [_PV_MOVE]),
+            [(15, _FORK_PV), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
         ]
     )
 
-    candidates = find_blunders(
-        GAME_PGN,
-        TARGET,
-        player_rating=1200,
-        game_id="test-game",
-        game_url="https://www.chess.com/game/live/12345",
-        engine=engine,
-        depth=1,
-        blunder_threshold_cp=250,
-        decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
-        max_solver_moves=MAX_SOLVER_MOVES,
-        quality_model=FakeQualityModel(0.73),
-    )
+    candidates = _find_fork_blunders(engine, quality_model=FakeQualityModel(0.73))
 
     assert len(candidates) == 1
     assert candidates[0].quality_score == 0.73
@@ -340,31 +410,50 @@ def test_computes_quality_score_when_a_quality_model_is_given():
 def test_quality_score_is_none_when_no_quality_model_is_given():
     engine = FakeEngine(
         [
-            (999, [_PV_MOVE]),
-            [(20, [_PV_MOVE]), (18, [_PV_MOVE])],
-            (10, [_PV_MOVE]),
             (200, [_PV_MOVE]),
-            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],
+            [(15, _FORK_PV), (-90, [_PV_MOVE])],
             (-300, [_PV_MOVE]),
         ]
     )
 
-    candidates = find_blunders(
-        GAME_PGN,
-        TARGET,
-        player_rating=1200,
-        game_id="test-game",
-        game_url="https://www.chess.com/game/live/12345",
-        engine=engine,
-        depth=1,
-        blunder_threshold_cp=250,
-        decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
-        max_solver_moves=MAX_SOLVER_MOVES,
-    )
+    candidates = _find_fork_blunders(engine)
 
     assert len(candidates) == 1
     assert candidates[0].quality_score is None
+
+
+def test_rejects_a_candidate_the_quality_model_scores_below_threshold():
+    # Same forced/blunder/payoff shape as the flagging test — everything
+    # else about this candidate is fine — but the quality model itself
+    # predicts it's below-median (0.2 < the 0.5 threshold). This is the
+    # real "is this a good puzzle" judgment replacing what used to be a
+    # hand-picked cp/pawn cutoff alone.
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, _FORK_PV), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine, quality_model=FakeQualityModel(0.2))
+
+    assert candidates == []
+
+
+def test_accepts_a_candidate_exactly_at_the_quality_threshold():
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, _FORK_PV), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine, quality_model=FakeQualityModel(QUALITY_SCORE_THRESHOLD))
+
+    assert len(candidates) == 1
+    assert candidates[0].quality_score == QUALITY_SCORE_THRESHOLD
 
 
 def test_ignores_games_the_target_did_not_play_in():
@@ -382,6 +471,8 @@ def test_ignores_games_the_target_did_not_play_in():
         decided_position_cp=600,
         forced_gap_cp=FORCED_GAP_CP,
         max_solver_moves=MAX_SOLVER_MOVES,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        quality_score_threshold=QUALITY_SCORE_THRESHOLD,
     )
 
     assert candidates == []

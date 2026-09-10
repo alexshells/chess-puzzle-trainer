@@ -322,35 +322,53 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     blundering move — the one thing every candidate source (our own games,
     or an already-published Lichess puzzle) has in common — computes
     `setup_swing_cp` (how much the position dropped, from the *blundering*
-    side's own POV, purely from that one move) and `forced`/
-    `refutation_gap_cp` (multipv=2 at the resulting position: does the
-    solving side have one clearly-best move, or several roughly-equal
-    ones). `find_blunders` calls this directly now (one extra Stockfish
-    call per checked position, for the pre-setup eval) and records all
-    three on `PersonalPuzzleCandidate`.
-  - **`forced` and a tighter `decided_position_cp` are now hard gates in
-    `find_blunders`, not just descriptive** (2026-09-10 fix, prompted by
-    three concrete bad-candidate patterns actually observed: K+R-vs-K-style
-    "many roads lead to Rome" endgames graded against one arbitrary correct
-    line; "mate in 5 instead of mate in 3" candidates where the outcome —
-    losing — never actually changed; and forced-but-barely-so candidates
-    where it's hard to see why the "correct" move beats the alternative).
-    `find_blunders` now rejects a candidate outright when `analysis.forced`
-    is `False` — reusing the already-computed `refutation_gap_cp`/
-    `forced_gap_cp` comparison, which was being calculated and stored on
-    every candidate long before anything actually acted on it. This alone
-    fixes the "many roads lead to Rome" case: alternate mating lines of
-    different lengths differ by only a few cp under `mate_score`-scaled
-    scoring, so they were already correctly computing as *not* forced, just
-    never rejected. `decided_position_cp` (the "already lost, don't bother"
-    guard) dropped from 600 to 350 — 600cp reads as "not yet decided" right
-    up until a genuinely hopeless position, so a huge eval swing from
-    "already essentially lost" into "now literally forced mate" still
-    passed as a candidate even though the practical outcome never changed.
-    Both are still tunable knobs in `config.py`, not something derived from
-    real usage data yet — revisit after watching more real candidates.
-    `forced_gap_cp` itself (the margin required to count as forced) is
-    unchanged at 100 for now.
+    side's own POV, purely from that one move), `forced`/`refutation_gap_cp`
+    (multipv=2 at the resulting position: does the solving side have one
+    clearly-best move, or several roughly-equal ones), and
+    `has_decisive_payoff`/`decisive_material_gain` (does the best line
+    itself actually reach mate or bank real material within
+    `decisive_material_gain`'s bar — see `find_decisive_payoff` below).
+    `find_blunders` calls this directly (one extra Stockfish call per
+    checked position, for the pre-setup eval).
+  - **`find_decisive_payoff`** (`puzzle_quality.py`): walks a move list
+    (solver, reply, solver, reply, ...) from a starting position and
+    returns the first point — checked only after a *solver* move, never an
+    auto-played reply — where checkmate lands or real material gets banked.
+    Used two ways from the same function: `analyse_puzzle_quality` calls it
+    unbounded (the whole best line) to compute the
+    `has_decisive_payoff`/`decisive_material_gain` *feature*;
+    `find_blunders` calls it again bounded by `max_solver_moves` to decide
+    where the *shown* solution actually ends, truncating right at the
+    payoff rather than padding out to the full move budget with moves that
+    don't add anything a solver can verify.
+  - **`forced` is a hard gate in `find_blunders`; everything else about
+    "is this actually a good puzzle" is the quality model's job now**
+    (2026-09-10, in two passes). First pass added three separate hand-tuned
+    heuristic gates directly in `find_blunders`, reacting to three concrete
+    bad-candidate patterns actually observed: K+R-vs-K-style "many roads
+    lead to Rome" endgames graded against one arbitrary correct line; "mate
+    in 5 instead of mate in 3" candidates where the outcome — losing —
+    never actually changed; and a puzzle whose first move won a pawn but
+    whose remaining moves had "no concrete plan". Second pass (same day,
+    after the pattern of one-off fixes was flagged as not scaling)
+    generalized instead of continuing to patch: `forced` stays a hard
+    reject (a puzzle without one clear right answer isn't fixable by a
+    better probability score — this alone still fixes the "many roads lead
+    to Rome" case, since alternate mating lines of different lengths differ
+    by only a few cp under `mate_score`-scaled scoring and were already
+    correctly computing as *not* forced, just never rejected before this).
+    `decided_position_cp` (600, back up from an interim 350) is now purely
+    a compute-saving sanity check — skip an obviously-over position before
+    spending Stockfish's "after" call on it — not the real judgment; that
+    nuance is `puzzle_position_eval_cp`, now one of the quality model's own
+    features (see below), so the model learns its own "how decided is too
+    decided" boundary from real data instead of a hand-picked cp cutoff.
+    `decisive_material_gain` (1 — any real material, even a single pawn,
+    counts) still hard-gates "was *any* payoff ever found within the ply
+    budget" (via `find_decisive_payoff`, above) — a candidate that never
+    resolves into anything concrete is rejected outright regardless of what
+    a model would say — but *how much* material, and *how quickly*, are now
+    also model features, not separately-thresholded gates.
   - **Bootstrap training data off Lichess's own puzzles**
     (`ml/src/ml/build_training_dataset.py`): our own `puzzle_feedback` vote
     count will be small for a long time, but Lichess's `Popularity` column
@@ -396,11 +414,25 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     Its one feature beyond the shared core is `rating` — legitimate
     context for predicting popularity, but not something its sibling model
     below can use, since there `rating` *is* the label. First real run
-    (5,618 examples): AUC 0.570 — modest, but a genuinely balanced problem
-    and above chance, and `forced`'s coefficient came out positive
-    (a clearly-forced refutation correlates with higher relative
-    popularity) — a real, if small, validation of the forced/unique
-    feature above.
+    (5,618 examples, 4 core features): AUC 0.570. Retrained 2026-09-10 with
+    the 3 new core features above (`puzzle_position_eval_cp`/
+    `has_decisive_payoff`/`decisive_material_gain`) — first at a 1,000-row
+    sample (AUC 0.560, essentially flat, but too small a sample to trust as
+    a verdict), then for real at **51,096 examples: AUC 0.582** — a modest
+    but genuine improvement over the original 4-feature/5,618-row baseline,
+    and confirms the 1,000-row run understated it (noisy small-sample
+    coefficients, not a real ceiling). `rating` remains by far the largest
+    standardized coefficient (-0.278) — a harder-rated puzzle trends toward
+    *less* relative popularity within this sample — with the new features
+    all present but small (0.02-0.08 in magnitude) and directionally
+    sensible (`has_decisive_payoff` positive). AUC 0.58 is still a longer
+    way from "confidently gates candidates on its own" than from chance;
+    `forced` staying a hard, separate gate rather than folding it into the
+    model's soft judgment is exactly why that's an acceptable place to be.
+    `quality_score_threshold` (0.5, `config.py`) is the actual accept/reject
+    bar `find_blunders` applies to this model's prediction now (see above) —
+    matches the model's own median-split training framing exactly:
+    "better than the median Lichess puzzle in this sample."
   - **Puzzle-rating regressor** (`ml/src/ml/puzzle_rating_model.py`):
     predicts a Lichess-style difficulty rating directly from position
     features — a different problem from the quality classifier's, and a
@@ -414,15 +446,22 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     predicted up front instead of earned. Ridge regression (same
     small-sample-size reasoning as the classifier), trained on Lichess's
     own puzzles since their `Rating` column *is* that crowd-converged
-    value. First real run (5,618 examples): R² 0.251, MAE ~397 rating
-    points — a real but modest signal (three-quarters of the variance in
-    human-perceived difficulty isn't explained by these four features
-    alone, and an average miss of ~400 points is too noisy to serve
-    puzzles at a precise rating on its own), but an interpretable one:
-    `forced` and `refutation_gap_cp` both came out negative — an
+    value. First real run (5,618 examples, 4 core features): R² 0.251, MAE
+    ~397 rating points — a real but modest signal, but an interpretable
+    one: `forced` and `refutation_gap_cp` both came out negative — an
     "obvious," clearly-forced solution rates *easier*, one with close
     alternatives rates *harder*, which matches real chess intuition about
-    what makes a tactic hard to be sure of.
+    what makes a tactic hard to be sure of. Retrained 2026-09-10 alongside
+    the quality classifier: a 1,000-row sample first (R² 0.270, MAE 364.2 —
+    already an improvement), then for real at **51,096 examples: R² 0.326,
+    MAE 366.8** — a real, this time unambiguous jump in explained variance
+    over the original 4-feature/5,618-row baseline (0.251), the strongest
+    result of anything retrained today. `puzzle_position_eval_cp` dominates
+    the standardized coefficients here too (-399, by far the largest
+    magnitude) — a puzzle position that was already more extreme for the
+    solver (deeper advantage or disadvantage) predicts a materially
+    different difficulty rating, which is an intuitive result the model
+    didn't have access to before this feature existed.
   - **The rating regressor is wired into `game_import.py` (built)** —
     `find_blunders` takes an optional `rating_model` (a loaded
     `puzzle_rating_model` pipeline); when given, a candidate's `rating` is
@@ -439,17 +478,18 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     **Committed to `ml/models/` on purpose, not gitignored** — Railway's
     container filesystem is ephemeral (see Deployment below), so a model
     that only ever lived in `ml/var/` would vanish on the next deploy and
-    silently fall back to the heuristic in production. The quality
-    classifier's inference is *not* wired in anywhere yet — nothing calls
-    `puzzle_quality_model.predict()` outside its own tests.
+    silently fall back to the heuristic in production.
   - **The quality classifier is wired in too (built)** — `find_blunders`
     takes an optional `quality_model` the same way it takes `rating_model`;
     when given, a candidate's `quality_score` is `puzzle_quality_model`'s
     prediction (reusing the just-computed `rating` as that model's one
     extra feature), stored on `PersonalPuzzleCandidate` and relayed onto
     backend's `Puzzle` the same way `rating`/`forced`/`setup_swing_cp`
-    already are. Nothing scored it before now; the delivery bandit below is
-    the first consumer.
+    already are. Originally wired in purely for storage (the delivery
+    bandit below was the only real consumer) — as of 2026-09-10,
+    `find_blunders` itself is the primary consumer: a candidate whose
+    `quality_score` falls below `quality_score_threshold` is rejected
+    outright, not just scored for later. See the hard-gate bullet above.
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random

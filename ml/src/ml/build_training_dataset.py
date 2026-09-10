@@ -75,6 +75,7 @@ def build_dataset(
     *,
     depth: int,
     forced_gap_cp: int,
+    decisive_material_gain: int,
 ) -> tuple[int, int]:
     """
     Scores an already-sampled list of Lichess CSV rows (dicts keyed by the
@@ -100,7 +101,12 @@ def build_dataset(
             setup_move = moves[0]
 
             analysis = analyse_puzzle_quality(
-                row["FEN"], setup_move, engine, depth=depth, forced_gap_cp=forced_gap_cp
+                row["FEN"],
+                setup_move,
+                engine,
+                depth=depth,
+                forced_gap_cp=forced_gap_cp,
+                decisive_material_gain=decisive_material_gain,
             )
             if analysis is None:
                 skipped += 1
@@ -116,6 +122,9 @@ def build_dataset(
                     setup_swing_cp=analysis.setup_swing_cp,
                     forced=analysis.forced,
                     refutation_gap_cp=analysis.refutation_gap_cp,
+                    puzzle_position_eval_cp=analysis.puzzle_position_eval_cp,
+                    has_decisive_payoff=analysis.has_decisive_payoff,
+                    decisive_material_gain=analysis.decisive_material_gain,
                     popularity=int(row["Popularity"]),
                     nb_plays=int(row["NbPlays"]),
                     created_at=datetime.now(timezone.utc),
@@ -140,6 +149,7 @@ def main() -> None:
     parser.add_argument("--sample-size", type=int, default=500)
     parser.add_argument("--depth", type=int, default=10, help="Lower than the live import's depth (12) — this runs Stockfish on many more positions offline, where speed matters more than the last bit of accuracy")
     parser.add_argument("--forced-gap-cp", type=int, default=settings.forced_gap_cp)
+    parser.add_argument("--decisive-material-gain", type=int, default=settings.decisive_material_gain)
     parser.add_argument("--csv-path", type=Path, default=_DEFAULT_CSV_PATH)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -158,6 +168,7 @@ def main() -> None:
             engine,
             depth=args.depth,
             forced_gap_cp=args.forced_gap_cp,
+            decisive_material_gain=args.decisive_material_gain,
         )
     finally:
         engine.quit()

@@ -22,6 +22,77 @@ from dataclasses import dataclass
 import chess
 import chess.engine
 
+_PIECE_VALUES = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+}
+
+
+def _material_balance(board: chess.Board, color: chess.Color) -> int:
+    """Net material for `color` minus their opponent, in pawns (king excluded, standard values)."""
+    balance = 0
+    for piece_type, value in _PIECE_VALUES.items():
+        balance += value * len(board.pieces(piece_type, color))
+        balance -= value * len(board.pieces(piece_type, not color))
+    return balance
+
+
+@dataclass(frozen=True)
+class DecisivePayoff:
+    """
+    Whether a solving line actually concludes somewhere concrete — a real
+    complaint this exists to catch: a puzzle whose first move wins a pawn
+    but whose remaining moves have "no concrete plan" isn't a satisfying
+    puzzle just because the eval numbers look fine on paper.
+    """
+
+    reached: bool
+    # Net material banked for the solving side at the payoff point (0 if
+    # never reached).
+    material_gain: int
+    # 0-based index into the walked moves where the payoff was reached
+    # (always an even index — solving lines start on a solver move and
+    # alternate solver/reply); None if never reached.
+    ply_index: int | None
+
+
+def find_decisive_payoff(
+    board_start: chess.Board,
+    solver_color: chess.Color,
+    moves: list[chess.Move],
+    *,
+    decisive_material_gain: int,
+    max_plies: int | None = None,
+) -> DecisivePayoff:
+    """
+    Walks `moves` (solver, reply, solver, reply, ...) from board_start and
+    checks, after each solver move (even indices — an auto-played opponent
+    reply at an odd index isn't something a payoff should be judged after),
+    whether checkmate has been delivered or real material has actually been
+    banked. Stops at the first such point rather than walking further, so a
+    caller that wants "the shortest line to a real payoff" gets exactly
+    that from `ply_index`. `max_plies` caps how much of `moves` gets walked
+    at all (a display-length budget); omit it to consider the whole line,
+    e.g. when this is a quality *feature* rather than something bounding
+    what gets shown to a solver.
+    """
+    baseline = _material_balance(board_start, solver_color)
+    board = board_start.copy()
+    limit = len(moves) if max_plies is None else min(max_plies, len(moves))
+
+    for i, move in enumerate(moves[:limit]):
+        board.push(move)
+        if i % 2 != 0:
+            continue
+        gain = _material_balance(board, solver_color) - baseline
+        if board.is_checkmate() or gain >= decisive_material_gain:
+            return DecisivePayoff(reached=True, material_gain=gain, ply_index=i)
+
+    return DecisivePayoff(reached=False, material_gain=0, ply_index=None)
+
 
 @dataclass(frozen=True)
 class PuzzleQualityAnalysis:
@@ -43,6 +114,18 @@ class PuzzleQualityAnalysis:
     # Engine's suggested line from the puzzle position — solution[1:] for
     # whichever caller is building a playable puzzle out of this.
     solving_pv: list[chess.Move]
+    # Does solving_pv itself actually go anywhere concrete — mate, or real
+    # material banked — within decisive_material_gain's bar? See
+    # find_decisive_payoff. Computed over the *whole* solving_pv, not
+    # truncated to any particular display-length budget — this is a quality
+    # signal, not a "how much to show a solver" decision (that truncation
+    # is game_import.py's own concern, using the same find_decisive_payoff
+    # bounded by its own max_solver_moves). Defaulted (unlike the fields
+    # above) purely so existing test fixtures that build a PuzzleQualityAnalysis
+    # by hand for unrelated assertions don't all need updating — the one
+    # production call site (below) always sets both explicitly regardless.
+    has_decisive_payoff: bool = False
+    decisive_material_gain: int = 0
 
 
 def analyse_puzzle_quality(
@@ -52,6 +135,7 @@ def analyse_puzzle_quality(
     *,
     depth: int,
     forced_gap_cp: int,
+    decisive_material_gain: int,
 ) -> PuzzleQualityAnalysis | None:
     """
     Returns None if either the pre-setup or post-setup position has no legal
@@ -92,10 +176,17 @@ def analyse_puzzle_quality(
     # otherwise it's forced only if the gap clears the threshold.
     forced = refutation_gap_cp is None or refutation_gap_cp >= forced_gap_cp
 
+    solving_pv = list(info_lines[0].get("pv", []))
+    payoff = find_decisive_payoff(
+        board_puzzle, solver_color, solving_pv, decisive_material_gain=decisive_material_gain
+    )
+
     return PuzzleQualityAnalysis(
         puzzle_position_eval_cp=puzzle_position_eval_cp,
         setup_swing_cp=eval_pre - eval_puzzle_blunderer_pov,
         forced=forced,
         refutation_gap_cp=refutation_gap_cp,
-        solving_pv=list(info_lines[0].get("pv", [])),
+        solving_pv=solving_pv,
+        has_decisive_payoff=payoff.reached,
+        decisive_material_gain=payoff.material_gain,
     )
