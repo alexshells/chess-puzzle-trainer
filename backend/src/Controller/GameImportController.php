@@ -83,6 +83,7 @@ class GameImportController
      * @param array<int, array{
      *     fen: string, solution: string[], rating: int, externalId: string,
      *     forced: bool, setupSwingCp: int, qualityScore: ?float, gameUrl: ?string,
+     *     themes?: string[],
      * }> $candidates
      */
     private function persistNewCandidates(User $user, array $candidates): void
@@ -103,6 +104,12 @@ class GameImportController
             $puzzle->setForced($candidate['forced']);
             $puzzle->setSetupSwingCp($candidate['setupSwingCp']);
             $puzzle->setQualityScore($candidate['qualityScore']);
+            // Populates the same field Lichess puzzles already carry —
+            // PuzzleAttemptController's category-rating update already
+            // keys off Puzzle::getThemes() for any puzzle, so this is what
+            // makes a personal puzzle move a category rating for the first
+            // time (see CLAUDE.md's "Lichess Puzzle Generator" note).
+            $puzzle->setThemes($candidate['themes'] ?? []);
             $this->entityManager->persist($puzzle);
         }
 

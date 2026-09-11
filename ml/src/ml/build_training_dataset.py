@@ -27,6 +27,7 @@ import httpx
 import zstandard
 from sqlalchemy import select
 
+from ml import tablebase
 from ml.config import settings
 from ml.db import PuzzleQualityTrainingExample, SessionLocal
 from ml.puzzle_quality import analyse_puzzle_quality
@@ -76,11 +77,20 @@ def build_dataset(
     depth: int,
     forced_win_chance_gap: float,
     decisive_material_gain: int,
+    use_tablebase: bool = False,
 ) -> tuple[int, int]:
     """
     Scores an already-sampled list of Lichess CSV rows (dicts keyed by the
     CSV header) and upserts them as PuzzleQualityTrainingExample rows.
     Returns (examples_added, examples_skipped).
+
+    use_tablebase, unlike game_import.py's live import (which always probes
+    — see _process_one_game), defaults to False here: about 3.4% of a real
+    51k-row Lichess sample is tablebase-eligible (<=7 pieces), and the
+    tablebase's ~550ms self-throttle per eligible position adds real
+    minutes across a full-size dataset build for a source that's already
+    well-curated — worth it for our own live candidates, not for
+    re-verifying Lichess's own already-published puzzles at bulk scale.
     """
     session = SessionLocal()
     added = 0
@@ -107,6 +117,7 @@ def build_dataset(
                 depth=depth,
                 forced_win_chance_gap=forced_win_chance_gap,
                 decisive_material_gain=decisive_material_gain,
+                tablebase_prober=tablebase.probe if use_tablebase else None,
             )
             if analysis is None:
                 skipped += 1
@@ -156,6 +167,11 @@ def main() -> None:
     parser.add_argument("--decisive-material-gain", type=int, default=settings.decisive_material_gain)
     parser.add_argument("--csv-path", type=Path, default=_DEFAULT_CSV_PATH)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--use-tablebase",
+        action="store_true",
+        help="Verify forced with Lichess's tablebase API for <=7-piece positions (~3.4% of a real sample) — adds real minutes at a ~550ms self-throttle per eligible row; off by default for bulk builds (see build_dataset's docstring).",
+    )
     args = parser.parse_args()
 
     if not args.csv_path.exists():
@@ -173,6 +189,7 @@ def main() -> None:
             depth=args.depth,
             forced_win_chance_gap=args.forced_win_chance_gap,
             decisive_material_gain=args.decisive_material_gain,
+            use_tablebase=args.use_tablebase,
         )
     finally:
         engine.quit()

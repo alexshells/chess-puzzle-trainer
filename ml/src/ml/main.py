@@ -147,6 +147,7 @@ def get_game_import_status(user_id: int) -> GameImportStatusResponse:
                 forced=bool(c.forced),
                 setupSwingCp=c.setup_swing_cp or 0,
                 qualityScore=c.quality_score,
+                themes=json.loads(c.themes) if c.themes else [],
             )
             for c in undelivered
         ]

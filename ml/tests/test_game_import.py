@@ -25,6 +25,7 @@ import chess
 import numpy as np
 
 from ml.game_import import _select_games_to_process, find_blunders
+from ml.tablebase import TablebaseVerdict
 
 TARGET = "player_one"
 FORCED_WIN_CHANCE_GAP = 0.3
@@ -206,6 +207,10 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     assert candidate.solution == ["a7a6", "h5f6", "e8f8", "f6d7"]
     assert candidate.forced is True
     assert candidate.refutation_gap_cp == 215
+    # A real Nf6-fork-then-Nxd7 line — puzzle_motifs.tag_puzzle wired
+    # through end to end (see test_puzzle_motifs.py for the same shape
+    # tested directly).
+    assert candidate.themes == ["fork"]
     assert candidate.setup_swing_cp == 200 - 15
 
 
@@ -297,6 +302,27 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
     assert candidates[0].refutation_gap_cp is None
     assert candidates[0].setup_swing_cp == 50 - 15
     assert candidates[0].solution == ["a7a6", "h5f6", "e8f8", "f6d7"]
+
+
+def test_tablebase_prober_is_threaded_through_and_can_reject_a_win_chances_forced_candidate():
+    # Same shape as the standard "flags a blunder" fixture (best=15,
+    # second=-200 -> win_chances would call this forced) but with a fake
+    # tablebase prober confirming there's actually a second winning move —
+    # exact evidence overrides the engine-based judgment, and the candidate
+    # should be rejected outright since `forced` is a hard gate.
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(
+        engine, tablebase_prober=lambda board: TablebaseVerdict(winning=True, only_winning_move=False)
+    )
+
+    assert candidates == []
 
 
 def test_cuts_the_solution_short_once_a_decisive_payoff_is_reached():

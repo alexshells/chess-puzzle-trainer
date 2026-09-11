@@ -33,6 +33,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable
 
 import chess
 import chess.engine
@@ -42,13 +43,16 @@ from sklearn.pipeline import Pipeline
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ml import tablebase
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, ScannedGame, SessionLocal
+from ml.puzzle_motifs import tag_puzzle
 from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material, win_chances
 from ml.puzzle_quality_model import predict as predict_quality
 from ml.puzzle_quality_model import try_load as try_load_quality_model
 from ml.puzzle_rating_model import predict as predict_rating
 from ml.puzzle_rating_model import try_load as try_load_rating_model
+from ml.tablebase import TablebaseVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,14 @@ class BlunderCandidate:
     # puzzle_quality_model's predicted P(relatively popular), 0-1 — None
     # when no trained quality model file is available (see try_load()).
     quality_score: float | None
+    # Rule-based tactical-motif tags (puzzle_motifs.tag_puzzle) — see
+    # CLAUDE.md's "Lichess Puzzle Generator" research note. Relayed onto
+    # backend's Puzzle.themes the same way Lichess puzzles already carry
+    # themes, which is also what lets a personal puzzle move a category
+    # rating for the first time (PuzzleAttemptController's category-rating
+    # update already keys off Puzzle.themes generically — nothing else
+    # needed there).
+    themes: list[str]
 
 
 def fetch_archive_urls(username: str) -> list[str]:
@@ -131,6 +143,7 @@ def find_blunders(
     endgame_material_threshold: int,
     rating_model: Pipeline | None = None,
     quality_model: Pipeline | None = None,
+    tablebase_prober: Callable[[chess.Board], TablebaseVerdict | None] | None = None,
 ) -> list[BlunderCandidate]:
     """
     Walks one game, evaluating the position before and after every move the
@@ -192,6 +205,14 @@ def find_blunders(
     player's own chess.com rating in that game — a heuristic, not a real
     difficulty estimate. Defaults to None (the fallback) so this stays
     testable without a trained model file (see test_game_import.py).
+
+    tablebase_prober, if given, is passed straight through to
+    analyse_puzzle_quality (see puzzle_quality.py and tablebase.py) — an
+    exact win/draw/loss verdict for simplified (<=7-piece) endgame puzzle
+    positions overrides the win_chances-based `forced` judgment there.
+    Defaults to None (no probing, no network calls) so this stays testable
+    without hitting a real API — _process_one_game passes tablebase.probe
+    for real live imports.
     """
     game = chess.pgn.read_game(io.StringIO(pgn_text))
     if game is None:
@@ -227,6 +248,7 @@ def find_blunders(
                 depth=depth,
                 forced_win_chance_gap=forced_win_chance_gap,
                 decisive_material_gain=decisive_material_gain,
+                tablebase_prober=tablebase_prober,
             )
 
             if (
@@ -310,6 +332,9 @@ def find_blunders(
                             else analysis.solving_pv[:max_solving_plies]
                         )
                         solution = [last_move.uci()] + [m.uci() for m in solving_moves]
+                        themes = tag_puzzle(
+                            fen_before_last_move, solution, endgame_material_threshold=endgame_material_threshold
+                        )
                         candidates.append(
                             BlunderCandidate(
                                 fen=fen_before_last_move,
@@ -330,6 +355,7 @@ def find_blunders(
                                 forced=analysis.forced,
                                 refutation_gap_cp=analysis.refutation_gap_cp,
                                 setup_swing_cp=analysis.setup_swing_cp,
+                                themes=themes,
                             )
                         )
 
@@ -543,6 +569,13 @@ def _process_one_game(
         endgame_material_threshold=settings.endgame_material_threshold,
         rating_model=rating_model,
         quality_model=quality_model,
+        # Live per-user imports are naturally low-volume (max_games_per_run
+        # candidates per run), so the tablebase's ~550ms self-throttle per
+        # eligible position is worth the exactness here — unlike bulk
+        # dataset building (build_training_dataset.py), where the same
+        # throttle across thousands of rows would add real minutes; that
+        # script keeps it opt-in instead. See tablebase.py.
+        tablebase_prober=tablebase.probe,
     )
 
     for candidate in candidates:
@@ -563,6 +596,7 @@ def _process_one_game(
                 refutation_gap_cp=candidate.refutation_gap_cp,
                 setup_swing_cp=candidate.setup_swing_cp,
                 quality_score=candidate.quality_score,
+                themes=json.dumps(candidate.themes),
                 delivered=False,
                 created_at=datetime.now(timezone.utc),
             )

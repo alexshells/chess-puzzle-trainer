@@ -35,6 +35,12 @@ class GameImportCandidateOut(BaseModel):
     forced: bool
     setupSwingCp: int
     qualityScore: float | None = None
+    # Rule-based tactical-motif tags (puzzle_motifs.tag_puzzle), relayed
+    # onto backend's Puzzle.themes — see CLAUDE.md's "Lichess Puzzle
+    # Generator" research note. Empty for candidates found before tagging
+    # existed, not None — tagging always runs now, so "no tags matched" and
+    # "never tagged" would otherwise be indistinguishable.
+    themes: list[str] = []
 
 
 class GameImportStatusResponse(BaseModel):

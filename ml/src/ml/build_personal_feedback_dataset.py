@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 import chess.engine
 from sqlalchemy import select
 
+from ml import tablebase
 from ml.config import settings
 from ml.db import PuzzleQualityTrainingExample, SessionLocal, puzzle_feedback_table, puzzle_table
 from ml.puzzle_quality import analyse_puzzle_quality
@@ -94,6 +95,11 @@ def build_dataset(
                 depth=depth,
                 forced_win_chance_gap=forced_win_chance_gap,
                 decisive_material_gain=decisive_material_gain,
+                # Always on here, unlike build_training_dataset.py's opt-in
+                # flag — real personal-feedback volume is naturally tiny
+                # (same reasoning as this module's depth default above), so
+                # the tablebase's self-throttle costs seconds, not minutes.
+                tablebase_prober=tablebase.probe,
             )
             if analysis is None:
                 skipped += 1

@@ -190,6 +190,12 @@ class PersonalPuzzleCandidate(Base):
     # because candidates found before puzzle_quality_model was wired into
     # generation (or with no trained model file present) have no value.
     quality_score = Column(Float, nullable=True)
+    # JSON-encoded array of raw Lichess-style theme tags (puzzle_motifs.tag_puzzle,
+    # e.g. ["fork","doubleCheck"]) — relayed onto backend's Puzzle.themes the
+    # same way Lichess puzzles already carry themes (see CLAUDE.md's "Lichess
+    # Puzzle Generator" research note). Nullable: candidates found before
+    # this column existed have no value to backfill.
+    themes = Column(Text, nullable=True)
     delivered = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False)
 

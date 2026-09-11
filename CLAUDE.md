@@ -770,6 +770,94 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
       accept/reject decision in `find_blunders` moved to win_chances space;
       no model retraining was needed, and no new Alembic migration either
       (no new columns).
+  - **Exact tablebase verification for simplified (<=7-piece) endgame
+    positions** (2026-09-11, `ml/src/ml/tablebase.py`) — ported directly
+    from Lichess's own generator (`generator/tb.py`), which uses the same
+    free public API (`tablebase.lichess.ovh`) to get an *exact* win/draw/
+    loss verdict where Syzygy tables apply, rather than trusting engine
+    search's approximate judgment. Narrowly scoped to match Lichess's own
+    usage: only overrides `analyse_puzzle_quality`'s `forced` determination
+    (via a new `TablebaseVerdict.only_winning_move`), doesn't touch mate
+    verification (DTZ doesn't guarantee the *fastest* mate, so it can't
+    tell "mate in N" apart from "mate in N+1 also being correct" — Lichess
+    excludes mate lines from tablebase checks for the same reason) or
+    second-guess whether the engine's "this is winning at all" judgment was
+    right.
+    - **Opt-in via dependency injection, not a hard dependency** —
+      `analyse_puzzle_quality` takes a new `tablebase_prober` callable,
+      defaulting to `None` (no network calls, existing behavior
+      unchanged). A ≤7-piece FEN already existed in this codebase's own
+      test fixtures (`_MATE_FEN`, used by both `test_puzzle_quality.py` and
+      `test_game_import.py`) — an unconditional real HTTP call inside
+      `analyse_puzzle_quality` would have made those tests hit a real
+      network endpoint. `find_blunders` threads the same optional param
+      through; `_process_one_game` (the live import path) passes
+      `tablebase.probe` explicitly.
+    - **Self-throttled to ~550ms between requests** (matching Lichess's own
+      courtesy toward a shared, free, third-party resource it doesn't own)
+      — a real cost consideration for bulk dataset building: about 3.4% of
+      a real 51,096-row local Lichess sample is tablebase-eligible, so
+      enabling this for a full `build_training_dataset.py` run would add
+      roughly 16 minutes of pure throttle time. That script keeps it
+      **opt-in** via `--use-tablebase` (default off); `build_personal_feedback_dataset.py`
+      and live `game_import.py` imports both enable it unconditionally,
+      since their real volume is naturally small (bounded by
+      `max_games_per_run`, or by how much personal feedback actually
+      exists) — the same "always on for low-volume, opt-in for bulk"
+      split this session already applied to depth defaults.
+  - **Rule-based tactical-motif tagging** (2026-09-11,
+    `ml/src/ml/puzzle_motifs.py`) — after reading Lichess's own tagger
+    (`tagger/cook.py`) end to end for the research note above and
+    confirming it really is 44 hand-written geometric/material detector
+    functions with zero ML anywhere in it, ported a first, well-tested
+    subset the same way: `mate`, `fork`, `hangingPiece`, `pin`,
+    `discoveredCheck`/`doubleCheck`, `sacrifice`, `endgame` — pure
+    `python-chess` board-state checks, no extra engine calls, each a
+    simplified-but-faithful port of its Lichess namesake (documented
+    per-detector where simplified — e.g. `pin` just asks whether *any*
+    piece is pinned at the puzzle position, reusing
+    `tactical_sharpness().num_pinned_pieces`, rather than Lichess's
+    precise "does this pin specifically enable the tactic" check).
+    Deliberately not exhaustive — a tactical idea that doesn't match one of
+    these tags gets no tag at all, the same closed-world limitation
+    Lichess's own tagger has (see the research note's L5); Skewer/
+    KingAttack/DefensiveMove aren't implemented yet.
+    - **A real bug found while building the test fixtures**: the first
+      draft of `fork()` never counted a check as a fork target, because its
+      piece-value lookup had no entry for `chess.KING` (a plain dict
+      `.get(..., 0)` treats a king as worthless) — a verified real fork
+      (knight forks king + undefended queen) came back with zero tags
+      until fixed, exactly mirroring why Lichess's own `fork()` uses a
+      separate `king_values` dict giving the king a deliberately huge value
+      (99) rather than its own regular `values` dict. Fixed by adding a
+      `_KING_VALUES` dict (`{**_PIECE_VALUES, chess.KING: 99}`) used only
+      inside `_is_fork` — found by hand-verifying every test fixture
+      against a real `chess.Board` before trusting the assertions, not by
+      guessing.
+    - **`tag_puzzle(fen, solution, *, endgame_material_threshold)`** takes
+      the exact same `(fen, solution)` shape every candidate already has
+      (`BlunderCandidate.fen`/`.solution`) — `solution[0]` is the
+      opponent's setup move, `solution[1:]` is the solver's own line,
+      same indexing convention as Lichess's own `puzzle.mainline`. Called
+      from `find_blunders` right where a candidate is finalized (already
+      has its fen/solution assembled), stored as a new nullable
+      `PersonalPuzzleCandidate.themes` column (JSON-encoded, one more
+      Alembic migration) and relayed through `GameImportCandidateOut` →
+      `GameImportController::persistNewCandidates()` →
+      `Puzzle::setThemes()` — the exact same relay pattern `forced`/
+      `setupSwingCp`/`qualityScore` already follow.
+    - **This is also what lets a personal puzzle move a category rating
+      for the first time** — `PuzzleAttemptController`'s category-rating
+      update already calls `$this->puzzleCategoryMapper->categoriesFor($puzzle->getThemes() ?? [])`
+      generically, for any puzzle, personal or Lichess; a personal puzzle's
+      `themes` has been hardcoded `null` since Phase 2 specifically because
+      there was no motif classification yet (see that phase's note: "so a
+      personal puzzle never moves any category rating"). No further
+      backend change was needed for this to start working — it falls out
+      of populating `themes` the same way `gameUrl`/`rating` already do.
+      Worth watching in practice: `/stats`'s category radar chart will now
+      move for "My Games" solves whenever the tagger recognizes something,
+      same as it already does for Lichess puzzles.
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random

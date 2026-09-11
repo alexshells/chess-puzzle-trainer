@@ -1,6 +1,7 @@
 import chess
 
 from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, tactical_sharpness, total_material
+from ml.tablebase import TablebaseVerdict
 
 FORCED_WIN_CHANCE_GAP = 0.3
 DECISIVE_MATERIAL_GAIN = 1
@@ -151,6 +152,84 @@ def test_forced_when_no_second_legal_reply():
     assert analysis is not None
     assert analysis.refutation_gap_cp is None
     assert analysis.forced is True
+
+
+def test_tablebase_verdict_overrides_a_win_chances_forced_true():
+    # win_chances alone would call this forced (best=600, second=0, same
+    # shape as test_computes_setup_swing_and_forced_refutation) — but an
+    # exact tablebase verdict saying there's a *second* winning move takes
+    # precedence, since it's provably correct where engine judgment is only
+    # probably correct.
+    engine = FakeEngine(
+        [
+            (40, [_PV_MOVE]),
+            [(600, [_PV_MOVE]), (0, [_PV_MOVE])],
+        ]
+    )
+
+    analysis = analyse_puzzle_quality(
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        tablebase_prober=lambda board: TablebaseVerdict(winning=True, only_winning_move=False),
+    )
+
+    assert analysis is not None
+    assert analysis.forced is False
+
+
+def test_tablebase_verdict_overrides_a_win_chances_forced_false():
+    # The mirror case: win_chances alone would call this not-forced (same
+    # shape as test_not_forced_when_runner_up_is_close), but the tablebase
+    # confirms exactly one move preserves the win.
+    engine = FakeEngine(
+        [
+            (40, [_PV_MOVE]),
+            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],
+        ]
+    )
+
+    analysis = analyse_puzzle_quality(
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        tablebase_prober=lambda board: TablebaseVerdict(winning=True, only_winning_move=True),
+    )
+
+    assert analysis is not None
+    assert analysis.forced is True
+
+
+def test_tablebase_prober_that_returns_none_falls_back_to_win_chances():
+    # A prober is given (e.g. the real tablebase.probe, injected), but this
+    # particular position wasn't eligible or the probe failed — the
+    # win_chances-based judgment should still apply, exactly as if no
+    # prober had been given at all.
+    engine = FakeEngine(
+        [
+            (40, [_PV_MOVE]),
+            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # win_chances gap ~0.03 -- not forced
+        ]
+    )
+
+    analysis = analyse_puzzle_quality(
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+        tablebase_prober=lambda board: None,
+    )
+
+    assert analysis is not None
+    assert analysis.forced is False
 
 
 def test_returns_none_when_setup_position_has_no_legal_moves():

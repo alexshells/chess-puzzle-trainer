@@ -19,9 +19,12 @@ it usable for both a live chess.com game and a static Lichess CSV row alike.
 
 import math
 from dataclasses import dataclass
+from typing import Callable
 
 import chess
 import chess.engine
+
+from ml.tablebase import TablebaseVerdict
 
 # Ported directly from Lichess's own open-source puzzle generator
 # (github.com/ornicar/lichess-puzzler, generator/util.py) — see the
@@ -49,7 +52,7 @@ _PIECE_VALUES = {
 }
 
 
-def _material_balance(board: chess.Board, color: chess.Color) -> int:
+def material_balance(board: chess.Board, color: chess.Color) -> int:
     """Net material for `color` minus their opponent, in pawns (king excluded, standard values)."""
     balance = 0
     for piece_type, value in _PIECE_VALUES.items():
@@ -132,7 +135,7 @@ def tactical_sharpness(board: chess.Board) -> TacticalSharpness:
     return TacticalSharpness(
         num_checking_moves=num_checking_moves,
         num_hanging_pieces=num_hanging,
-        material_imbalance=abs(_material_balance(board, stm)),
+        material_imbalance=abs(material_balance(board, stm)),
         num_pinned_pieces=num_pinned,
     )
 
@@ -176,7 +179,7 @@ def find_decisive_payoff(
     e.g. when this is a quality *feature* rather than something bounding
     what gets shown to a solver.
     """
-    baseline = _material_balance(board_start, solver_color)
+    baseline = material_balance(board_start, solver_color)
     board = board_start.copy()
     limit = len(moves) if max_plies is None else min(max_plies, len(moves))
 
@@ -184,7 +187,7 @@ def find_decisive_payoff(
         board.push(move)
         if i % 2 != 0:
             continue
-        gain = _material_balance(board, solver_color) - baseline
+        gain = material_balance(board, solver_color) - baseline
         if board.is_checkmate() or gain >= decisive_material_gain:
             return DecisivePayoff(reached=True, material_gain=gain, ply_index=i)
 
@@ -216,6 +219,9 @@ class PuzzleQualityAnalysis:
     # (2026-09-11): re-deriving forced from win_chances at a 0.3 gap
     # reclassifies 7.8% of previously-forced rows as not-forced — all cases
     # where the runner-up move was itself already practically decisive.
+    # Overridden by an exact tablebase verdict when one is available and the
+    # puzzle position is simplified enough (<=7 pieces) — see
+    # tablebase.probe and analyse_puzzle_quality's tablebase_prober param.
     forced: bool
     # cp margin between the best move and the runner-up at the puzzle
     # position, per multipv=2. None when there was no second legal reply to
@@ -255,10 +261,20 @@ def analyse_puzzle_quality(
     depth: int,
     forced_win_chance_gap: float,
     decisive_material_gain: int,
+    tablebase_prober: Callable[[chess.Board], TablebaseVerdict | None] | None = None,
 ) -> PuzzleQualityAnalysis | None:
     """
     Returns None if either the pre-setup or post-setup position has no legal
     moves (mate/stalemate edge cases) — not enough there to score.
+
+    tablebase_prober, if given, is called on the puzzle position (i.e.
+    tablebase.probe, or a fake in tests) to get an exact win/draw/loss
+    verdict for simplified (<=7-piece) endgames — see tablebase.py. Its
+    only_winning_move result overrides the win_chances-based `forced`
+    determination when a verdict comes back; defaults to None (no probe at
+    all) so this stays network-free and deterministic in tests unless a
+    caller opts in — same "explicit opt-in, graceful no-op by default"
+    shape as rating_model/quality_model elsewhere in this pipeline.
     """
     limit = chess.engine.Limit(depth=depth)
 
@@ -299,6 +315,14 @@ def analyse_puzzle_quality(
         second_eval is None
         or win_chances(puzzle_position_eval_cp) - win_chances(second_eval) >= forced_win_chance_gap
     )
+
+    if tablebase_prober is not None:
+        tb_verdict = tablebase_prober(board_puzzle)
+        if tb_verdict is not None:
+            # Exact, not merely engine-probable — see module docstring on
+            # tablebase.py for why this is strictly more trustworthy than
+            # the win_chances-based judgment above when it applies.
+            forced = tb_verdict.only_winning_move
 
     solving_pv = list(info_lines[0].get("pv", []))
     payoff = find_decisive_payoff(
