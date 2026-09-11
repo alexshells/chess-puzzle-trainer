@@ -1043,6 +1043,19 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
 - Phase 3 (further out): generating positions from scratch when neither the
   puzzle database nor a player's own games have enough natural examples of
   a detected weakness
+- **Idea, shelved for later (2026-09-11)**: a second "My Games" puzzle
+  *type* — "why was that a blunder?" Instead of showing the position after
+  a blunder and asking the solver to find target's best follow-up (today's
+  only shape), this shows the position *before* a blundering move and has
+  the solver play the opponent's side — find the one punishing reply that
+  actually makes the move a blunder, rather than just being told it was
+  one. Same "exactly one right answer" constraint as today's puzzles
+  (`forced`/win_chances-space forced gate should apply here unchanged, not
+  a new mechanism) — the punishing move needs to be the single clearly-best
+  refutation, not one of several adequate ones. Not scoped or designed yet
+  (whose blunders this pulls from, whether it reuses `find_blunders` or
+  needs its own detection pass, how it's surfaced in the UI as a distinct
+  mode) — revisit when picking up new My Games work.
 
 ## Why Symfony (not Spring Boot)
 
