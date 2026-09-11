@@ -1,6 +1,6 @@
 import chess
 
-from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material
+from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, tactical_sharpness, total_material
 
 FORCED_GAP_CP = 100
 DECISIVE_MATERIAL_GAIN = 1
@@ -248,3 +248,30 @@ def test_total_material_is_low_for_a_bare_endgame():
     board = chess.Board("8/8/8/6N1/5k1p/2K5/8/8 w - - 3 67")
 
     assert total_material(board) == 4
+
+
+def test_tactical_sharpness_counts_checking_moves():
+    # A real opening position (Italian-ish, White to move) — Bxf7+ is the
+    # only legal move that gives check; White's own e4 pawn is undefended
+    # and attacked by Black's knight on c6, i.e. hanging (num_hanging
+    # counts the side-to-move's own pieces, not the opponent's).
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")
+
+    result = tactical_sharpness(board)
+
+    assert result.num_checking_moves == 1  # Bxf7+
+    assert result.num_hanging_pieces == 1  # the e4 pawn
+
+
+def test_tactical_sharpness_counts_pin_hanging_piece_and_imbalance():
+    # White: bishop(3) + pawn(1) = 4. Black: knight(3). Imbalance = 1.
+    # Black's knight on c6 is pinned to its king on e8 by the bishop on
+    # b5, along the same diagonal, and is also hanging (undefended, under
+    # attack, and — being pinned — literally cannot move to safety).
+    board = chess.Board("4k3/8/2n5/1B6/8/8/4P3/4K3 b - - 0 1")
+
+    result = tactical_sharpness(board)
+
+    assert result.num_pinned_pieces == 1
+    assert result.num_hanging_pieces == 1
+    assert result.material_imbalance == 1

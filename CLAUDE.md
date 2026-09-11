@@ -522,6 +522,52 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     solver (deeper advantage or disadvantage) predicts a materially
     different difficulty rating, which is an intuitive result the model
     didn't have access to before this feature existed.
+  - **`tactical_sharpness` — four more core features, found by asking a
+    genuinely different question** (2026-09-11, `puzzle_quality.py`).
+    Everything above calibrated features against *popularity within
+    already-curated Lichess puzzles* — a different question from "does
+    this even look like a legitimate puzzle candidate in the first place,"
+    which is what `find_blunders`' hard gates are actually trying to
+    answer, and popularity is the wrong ground truth for it (every
+    published Lichess puzzle already cleared that bar regardless of its
+    vote count — see the endgame-exemption bullet above for where
+    conflating the two nearly led to a bad fix). So instead: compared all
+    51,096 curated Lichess puzzle positions against 7,500 positions
+    randomly sampled from real chess.com games (hikaru, ~2,500 games via
+    the existing `fetch_archive_urls`/`fetch_games`), no curation or
+    blunder-filtering at all — 22 structural features tried (piece counts,
+    material, king safety, pawn structure, castling rights, development,
+    pins, hanging pieces, checks available, ...), ranked by Cohen's d.
+    Most of the top-ranked ones turned out to be the same fact wearing
+    different clothes: puzzles occur later in more materially-reduced
+    positions than a random sample (fewer pieces, less material, fewer
+    castling rights, more passed/isolated pawns — all correlated with each
+    other, not independent signals). Controlling for `total_material` at
+    every band, four survived as genuinely independent: `num_checking_moves`
+    (~3x more available checks in puzzle positions, the single strongest
+    effect found, d=0.87), `num_hanging_pieces` (d=0.51), `material_imbalance`
+    (pure material count, distinct from `puzzle_position_eval_cp`'s full
+    positional judgment; d=0.59), `num_pinned_pieces` (d=0.36) — a puzzle
+    position isn't just "later and simpler," it's measurably more
+    tactically loaded than a regular position at the same material level.
+    All four computed purely from board state in `tactical_sharpness()` —
+    no extra engine calls — and backfilled onto the existing 51,096-row
+    dataset directly (recomputing from each row's already-stored
+    `fen`/`setup_move`, no Stockfish re-run needed, done in under a
+    minute). Retrained both models on the expanded 11-feature core: quality
+    classifier AUC 0.582 → **0.590**; rating regressor R² 0.326 → **0.350**,
+    MAE 366.8 → **358.7** — both moved further in the right direction.
+    `num_checking_moves` came out as the standardized coefficient with the
+    most consistent, sizeable weight of the four in both models (quality:
+    0.078, second only to `forced`/rating; rating: +74, third-largest
+    magnitude) — the other three landed smaller, plausibly because their
+    effect is partly redundant with `forced`/`has_decisive_payoff` once
+    those are already in the model. Stored on `PuzzleQualityTrainingExample`
+    only (not mirrored onto `PersonalPuzzleCandidate`, same reasoning as
+    `has_decisive_payoff`'s two extra fields — nothing downstream reads
+    these back for a live candidate, they're computed fresh at generation
+    time); see `puzzle_quality.TacticalSharpness`'s own docstring for the
+    full methodology.
   - **The rating regressor is wired into `game_import.py` (built)** —
     `find_blunders` takes an optional `rating_model` (a loaded
     `puzzle_rating_model` pipeline); when given, a candidate's `rating` is

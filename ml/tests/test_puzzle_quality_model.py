@@ -17,6 +17,10 @@ class FakeExample:
         puzzle_position_eval_cp=0,
         has_decisive_payoff=True,
         decisive_material_gain=0,
+        num_checking_moves=0,
+        num_hanging_pieces=0,
+        material_imbalance=0,
+        num_pinned_pieces=0,
     ):
         self.setup_swing_cp = setup_swing_cp
         self.forced = forced
@@ -26,17 +30,24 @@ class FakeExample:
         self.puzzle_position_eval_cp = puzzle_position_eval_cp
         self.has_decisive_payoff = has_decisive_payoff
         self.decisive_material_gain = decisive_material_gain
+        self.num_checking_moves = num_checking_moves
+        self.num_hanging_pieces = num_hanging_pieces
+        self.material_imbalance = material_imbalance
+        self.num_pinned_pieces = num_pinned_pieces
 
 
 def test_build_feature_matrix_appends_rating_to_the_core_features():
     examples = [
-        FakeExample(300, True, 150, 1500, popularity=40, puzzle_position_eval_cp=20, decisive_material_gain=3)
+        FakeExample(
+            300, True, 150, 1500, popularity=40, puzzle_position_eval_cp=20, decisive_material_gain=3,
+            num_checking_moves=2, num_hanging_pieces=1, material_imbalance=4, num_pinned_pieces=1,
+        )
     ]
 
     X = build_feature_matrix(examples)
 
-    assert X.shape == (1, 8)
-    assert list(X[0]) == [300.0, 1.0, 1.0, 150.0, 20.0, 1.0, 3.0, 1500.0]
+    assert X.shape == (1, 12)
+    assert list(X[0]) == [300.0, 1.0, 1.0, 150.0, 20.0, 1.0, 3.0, 2.0, 1.0, 4.0, 1.0, 1500.0]
 
 
 def test_extract_popularity_reads_raw_values_in_order():
@@ -77,6 +88,10 @@ def test_train_recovers_a_clearly_separable_signal():
             rng.normal(0, 1, n),
             rng.integers(0, 2, n),
             rng.normal(0, 1, n),
+            rng.integers(0, 4, n),
+            rng.integers(0, 3, n),
+            rng.normal(0, 1, n),
+            rng.integers(0, 3, n),
             rng.normal(1500, 200, n),
         ]
     )
@@ -100,6 +115,10 @@ def test_predict_returns_a_probability_using_the_trained_pipeline():
             rng.normal(0, 1, n),
             rng.integers(0, 2, n),
             rng.normal(0, 1, n),
+            rng.integers(0, 4, n),
+            rng.integers(0, 3, n),
+            rng.normal(0, 1, n),
+            rng.integers(0, 3, n),
             rng.normal(1500, 200, n),
         ]
     )

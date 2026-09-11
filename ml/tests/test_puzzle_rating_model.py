@@ -16,6 +16,10 @@ class FakeExample:
         puzzle_position_eval_cp=0,
         has_decisive_payoff=True,
         decisive_material_gain=0,
+        num_checking_moves=0,
+        num_hanging_pieces=0,
+        material_imbalance=0,
+        num_pinned_pieces=0,
     ):
         self.setup_swing_cp = setup_swing_cp
         self.forced = forced
@@ -24,18 +28,25 @@ class FakeExample:
         self.puzzle_position_eval_cp = puzzle_position_eval_cp
         self.has_decisive_payoff = has_decisive_payoff
         self.decisive_material_gain = decisive_material_gain
+        self.num_checking_moves = num_checking_moves
+        self.num_hanging_pieces = num_hanging_pieces
+        self.material_imbalance = material_imbalance
+        self.num_pinned_pieces = num_pinned_pieces
 
 
 def test_build_feature_matrix_uses_only_core_features_no_rating():
     examples = [
-        FakeExample(300, True, 150, rating=1800, puzzle_position_eval_cp=20, decisive_material_gain=3)
+        FakeExample(
+            300, True, 150, rating=1800, puzzle_position_eval_cp=20, decisive_material_gain=3,
+            num_checking_moves=2, num_hanging_pieces=1, material_imbalance=4, num_pinned_pieces=1,
+        )
     ]
 
     X = build_feature_matrix(examples)
 
-    # 7 core features — rating must NOT be one of them, it's the label here.
-    assert X.shape == (1, 7)
-    assert list(X[0]) == [300.0, 1.0, 1.0, 150.0, 20.0, 1.0, 3.0]
+    # 11 core features — rating must NOT be one of them, it's the label here.
+    assert X.shape == (1, 11)
+    assert list(X[0]) == [300.0, 1.0, 1.0, 150.0, 20.0, 1.0, 3.0, 2.0, 1.0, 4.0, 1.0]
 
 
 def test_extract_ratings_reads_raw_values_in_order():
@@ -60,6 +71,10 @@ def test_train_recovers_a_clearly_correlated_signal():
             rng.normal(0, 100, n),
             rng.integers(0, 2, n),
             rng.normal(0, 1, n),
+            rng.integers(0, 4, n),
+            rng.integers(0, 3, n),
+            rng.normal(0, 1, n),
+            rng.integers(0, 3, n),
         ]
     )
     noise = rng.normal(0, 50, n)
@@ -83,6 +98,10 @@ def test_predict_returns_a_plausible_rating_using_the_trained_pipeline():
             rng.normal(0, 100, n),
             rng.integers(0, 2, n),
             rng.normal(0, 1, n),
+            rng.integers(0, 4, n),
+            rng.integers(0, 3, n),
+            rng.normal(0, 1, n),
+            rng.integers(0, 3, n),
         ]
     )
     ratings = 1500 + swing * 2 + rng.normal(0, 50, n)
@@ -110,6 +129,10 @@ def test_predict_clamps_wild_extrapolations_to_a_plausible_range():
             rng.normal(0, 100, n),
             rng.integers(0, 2, n),
             rng.normal(0, 1, n),
+            rng.integers(0, 4, n),
+            rng.integers(0, 3, n),
+            rng.normal(0, 1, n),
+            rng.integers(0, 3, n),
         ]
     )
     ratings = 1500 + swing * 2 + rng.normal(0, 50, n)

@@ -216,6 +216,18 @@ class PuzzleQualityTrainingExample(Base):
     puzzle_position_eval_cp = Column(Integer, nullable=False)
     has_decisive_payoff = Column(Boolean, nullable=False)
     decisive_material_gain = Column(Integer, nullable=False)
+    # puzzle_quality.tactical_sharpness() — structural "how tactically
+    # loaded is this" signals, computed purely from board state (no extra
+    # engine work). Found by comparing this same 51k-row sample against
+    # positions randomly sampled from real chess.com games (uncurated, no
+    # blunder filtering): these four kept discriminating puzzle from
+    # regular positions even after controlling for total_material, unlike
+    # most raw position stats, which turned out to just be proxies for
+    # "puzzles happen later in a more simplified game".
+    num_checking_moves = Column(Integer, nullable=False)
+    num_hanging_pieces = Column(Integer, nullable=False)
+    material_imbalance = Column(Integer, nullable=False)
+    num_pinned_pieces = Column(Integer, nullable=False)
     # Raw label source: Lichess's aggregated (+1/-1) vote score, roughly
     # -100..100, and the play count behind it — kept raw rather than
     # pre-binarized so the training script can choose its own label

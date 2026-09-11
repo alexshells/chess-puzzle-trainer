@@ -28,6 +28,10 @@ CORE_FEATURE_NAMES = [
     "puzzle_position_eval_cp",
     "has_decisive_payoff",
     "decisive_material_gain",
+    "num_checking_moves",
+    "num_hanging_pieces",
+    "material_imbalance",
+    "num_pinned_pieces",
 ]
 
 
@@ -38,6 +42,10 @@ def core_features(
     puzzle_position_eval_cp: float,
     has_decisive_payoff: bool,
     decisive_material_gain: float,
+    num_checking_moves: float,
+    num_hanging_pieces: float,
+    material_imbalance: float,
+    num_pinned_pieces: float,
 ) -> list[float]:
     """
     refutation_gap_cp is None when there was no second legal reply to compare
@@ -47,7 +55,12 @@ def core_features(
     model learn its own "how decided is too decided" boundary instead of a
     hand-picked cp cutoff; has_decisive_payoff/decisive_material_gain do the
     same for "does the solving line actually go anywhere concrete" — see
-    puzzle_quality.py's find_decisive_payoff.
+    puzzle_quality.py's find_decisive_payoff. The last four (see
+    puzzle_quality.tactical_sharpness) came out of comparing real Lichess
+    puzzle positions against positions randomly sampled from real chess.com
+    games: they're the ones that kept discriminating even after controlling
+    for total_material, i.e. not just proxies for "this happened later in
+    a more simplified game" the way most raw position stats turned out to be.
     """
     has_second_line = refutation_gap_cp is not None
     return [
@@ -58,6 +71,10 @@ def core_features(
         float(puzzle_position_eval_cp),
         1.0 if has_decisive_payoff else 0.0,
         float(decisive_material_gain),
+        float(num_checking_moves),
+        float(num_hanging_pieces),
+        float(material_imbalance),
+        float(num_pinned_pieces),
     ]
 
 
@@ -70,6 +87,10 @@ def core_features_from_analysis(analysis: PuzzleQualityAnalysis) -> list[float]:
         analysis.puzzle_position_eval_cp,
         analysis.has_decisive_payoff,
         analysis.decisive_material_gain,
+        analysis.num_checking_moves,
+        analysis.num_hanging_pieces,
+        analysis.material_imbalance,
+        analysis.num_pinned_pieces,
     )
 
 
@@ -82,6 +103,10 @@ def core_features_from_example(example: PuzzleQualityTrainingExample) -> list[fl
         example.puzzle_position_eval_cp,
         example.has_decisive_payoff,
         example.decisive_material_gain,
+        example.num_checking_moves,
+        example.num_hanging_pieces,
+        example.material_imbalance,
+        example.num_pinned_pieces,
     )
 
 
