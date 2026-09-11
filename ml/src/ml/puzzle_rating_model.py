@@ -11,13 +11,21 @@ crowd to converge a rating from, so it has to be predicted up front instead.
 This model is trained on Lichess's own puzzles (whose Rating column *is*
 that crowd-converged value) to learn what position features predict it.
 
-Ridge regression (L2-regularized linear regression), not something bigger —
-same reasoning as the sibling puzzle_quality_model.py: small sample, one
-bootstrap source, a linear model's coefficients stay directly readable.
+Gradient-boosted trees (sklearn's HistGradientBoostingRegressor), not ridge
+regression. Ridge was the original, deliberate choice back when the training
+set was a few thousand rows — same small-sample-overfitting reasoning as the
+sibling quality classifier. At 51k+ rows that reasoning no longer holds, and
+a direct comparison (2026-09-11, same data/split, sklearn's *default*
+hyperparameters) confirmed it: ridge R^2 0.350 vs. gradient boosting R^2
+0.470 (MAE 358.7 -> 318.5) — a bigger jump than the quality classifier got
+from the same swap. See CLAUDE.md's Phase 2.5 note.
 
-Deliberately excludes `rating` from its own features for the obvious
-reason — it's the label here, unlike in puzzle_quality_model.py where it's
-legitimate context for a *different* target (popularity).
+Deliberately *not* extended with personal-feedback weighting the way the
+quality classifier was — `PuzzleFeedback.stars` measures "was this puzzle
+enjoyable", not "was this puzzle's difficulty rating accurate". There's no
+crowd-converged ground-truth rating for a personal puzzle to train toward;
+a 5-star vote doesn't tell us whether the predicted rating was right. This
+model stays Lichess-only.
 
 Run via `uv run python -m ml.puzzle_rating_model`.
 """
@@ -28,11 +36,11 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from ml.db import PuzzleQualityTrainingExample
 from ml.puzzle_features import CORE_FEATURE_NAMES, build_core_feature_matrix, core_features_from_analysis, load_examples
@@ -49,7 +57,10 @@ _DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "models" /
 # is unconstrained and can extrapolate a wild value for an input far outside
 # the training distribution, so predictions are clamped to something a human
 # would recognize as a plausible puzzle rating rather than e.g. a negative
-# number or something so large it can only be a bug.
+# number or something so large it can only be a bug. Kept for the gradient-
+# boosting model too even though trees can't extrapolate the same
+# pathological way linear regression can — still a cheap, correct safety net
+# against a genuinely out-of-distribution input.
 MIN_RATING = 400
 MAX_RATING = 3000
 
@@ -65,15 +76,15 @@ def extract_ratings(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
 def train(X: np.ndarray, ratings: np.ndarray, *, test_size: float, seed: int) -> tuple[Pipeline, dict]:
     X_train, X_test, y_train, y_test = train_test_split(X, ratings, test_size=test_size, random_state=seed)
 
-    pipeline = Pipeline(
-        [
-            ("scale", StandardScaler()),
-            ("regress", Ridge()),
-        ]
-    )
+    pipeline = Pipeline([("regress", HistGradientBoostingRegressor(random_state=seed))])
     pipeline.fit(X_train, y_train)
 
     y_pred = pipeline.predict(X_test)
+
+    # See the sibling quality classifier's train() for why permutation
+    # importance replaces coefficients here — HistGradientBoostingRegressor
+    # has neither .coef_ nor .feature_importances_.
+    importance = permutation_importance(pipeline, X_test, y_test, n_repeats=10, random_state=seed, scoring="r2")
 
     report = {
         "n_train": len(X_train),
@@ -82,7 +93,7 @@ def train(X: np.ndarray, ratings: np.ndarray, *, test_size: float, seed: int) ->
         "mae": mean_absolute_error(y_test, y_pred),
         "rmse": root_mean_squared_error(y_test, y_pred),
         "r2": r2_score(y_test, y_pred),
-        "coefficients": dict(zip(FEATURE_NAMES, pipeline.named_steps["regress"].coef_.tolist())),
+        "permutation_importance": dict(zip(FEATURE_NAMES, importance.importances_mean.tolist())),
     }
     return pipeline, report
 
@@ -129,7 +140,7 @@ def main() -> None:
 
     logger.info("n_train=%d n_test=%d mean_rating=%.0f", report["n_train"], report["n_test"], report["mean_rating"])
     logger.info("MAE: %.1f  RMSE: %.1f  R^2: %.3f", report["mae"], report["rmse"], report["r2"])
-    logger.info("Coefficients (standardized features): %s", report["coefficients"])
+    logger.info("Permutation importance (mean R^2 drop when shuffled): %s", report["permutation_importance"])
 
     args.model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, args.model_path)

@@ -589,6 +589,94 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     *still* at or past `decided_position_cp` afterward, regardless of how
     large the raw swing or forced-gap number looks. Doesn't touch the
     before-side check's intentional asymmetry at all.
+  - **Both models switched from linear to gradient-boosted trees**
+    (2026-09-11, `sklearn.ensemble.HistGradientBoosting{Classifier,Regressor}`
+    — already a core dependency, nothing new installed). Logistic
+    regression/ridge were the original, deliberate choice back when the
+    training set was a few thousand rows, reasoning that a small linear
+    model was less likely to overfit than trees. At 51k+ rows that
+    reasoning no longer held, and a direct comparison (same data, same
+    split, sklearn's *default* hyperparameters — no tuning at all) proved
+    it: quality classifier AUC 0.590 → **0.625**; rating regressor R²
+    0.350 → **0.470** (MAE 358.7 → **318.5**) — both a real jump, the
+    rating regressor's especially so. This resolved a live, real question
+    from earlier the same day: raising `quality_score_threshold` to fight
+    a borderline-scored bad candidate (see the "1 move isn't enough"
+    report below) had turned out to not be viable — precision barely
+    moved before volume collapsed, because the model's predictions
+    clustered right around 0.5. That's a classic symptom of a model that
+    genuinely doesn't have much separation to work with, i.e. model
+    *capacity*, not a data or feature ceiling — and this result confirms
+    it: trees extract meaningfully more signal from the *exact same*
+    features and rows a linear model already had access to. Neither
+    pipeline needs StandardScaler anymore (trees are scale-invariant).
+    Neither has `.coef_` or `.feature_importances_` either (unlike
+    sklearn's older `GradientBoostingClassifier`) —
+    `sklearn.inspection.permutation_importance` (how much shuffling one
+    column actually hurts held-out performance) replaces the printed
+    coefficient dict, and is arguably more honest anyway, since it's
+    measured on real held-out behavior rather than read off fitted
+    parameters. First real permutation-importance run: `rating` (0.104)
+    and `puzzle_position_eval_cp` (0.040) dominate the quality classifier;
+    `puzzle_position_eval_cp` alone dominates the rating regressor (0.776
+    — by far the largest single feature effect measured anywhere in this
+    phase), with `refutation_gap_cp` (0.078) and `num_checking_moves`
+    (0.071) a distant second and third.
+  - **The quality classifier also trains on real personal-puzzle feedback
+    now, weighted by how much of it exists** (2026-09-11,
+    `puzzle_quality_model.extract_labels()`/`extract_weights()`,
+    `build_personal_feedback_dataset.py`) — the fourth idea from that same
+    scoping discussion, and the one that actually addresses the *label*
+    problem underneath all of this: Lichess popularity has always been a
+    bootstrap proxy (see the Bootstrap-training-data bullet above) for the
+    question that actually matters — will *this* candidate, generated
+    from *this* person's own games, feel satisfying to *them* — and
+    `PuzzleFeedback.stars` (1-5, already fully built and wired up in the
+    app, just never previously used for training) is the real, direct
+    answer. Deliberately not a hard cutover once "enough" data exists —
+    weighted, growing smoothly, same shrinkage shape
+    `GlickoRatingService` already uses elsewhere in this codebase:
+    `weight = n / (n + k)` fraction of `personal_feedback_max_weight`
+    (10.0 — a personal example counts for up to 10x a Lichess one once
+    fully trusted, since it answers the real question directly with none
+    of the crowd-of-strangers proxy gap), where n is the total personal
+    example count and k (`personal_feedback_k`, 100) is the point of
+    "half confidence". At n=0 (true today — see below) this is
+    mathematically identical to Lichess-only training; nothing changes
+    until real votes exist. Both constants are deliberately round,
+    unmeasured starting guesses, not derived the way other dials this
+    session were — there isn't remotely enough personal-feedback volume
+    yet to calibrate them from data the way, say, `endgame_material_threshold`
+    was; revisit once real votes accumulate.
+    - `extract_labels()` uses *different* rules per source, on purpose: a
+      median split for Lichess rows (popularity has no fixed "good"
+      zero-point — same reasoning as `train()`'s original docstring), but
+      a fixed `stars >= 3` threshold for personal rows, matching the
+      threshold `Puzzle::$discardedAt` already uses elsewhere in this
+      codebase (1-2 stars discards a puzzle, 3+ keeps it) rather than
+      inventing a new one. The Lichess median is computed over Lichess
+      rows only, so it can't drift as personal volume grows.
+    - `build_personal_feedback_dataset.py` (run via
+      `uv run python -m ml.build_personal_feedback_dataset`) mirrors
+      `build_training_dataset.py`'s shape exactly — same
+      `analyse_puzzle_quality()` call, same `PuzzleQualityTrainingExample`
+      target table, `source="personal"` instead of `"lichess"` — but reads
+      straight from the live DB via `db.py`'s `external_metadata` tables
+      (`puzzle`/`puzzle_feedback`, already declared read-only there for
+      exactly this) rather than a downloaded CSV. **Caught a real, latent
+      bug doing this**: `puzzle_feedback_table`'s mirror had sat unused
+      long enough to go stale — it modeled the table as a `thumbs_up`
+      boolean, but the live schema (confirmed against `PuzzleFeedback.php`
+      directly) has always been `stars: int`. Harmless until this became
+      the first real reader of that table; fixed alongside. Also added
+      `fen`/`solution`/`external_id` to the `puzzle` mirror (needed to
+      re-derive the same FEN-plus-setup-move shape a Lichess CSV row has).
+    - **`puzzle_rating_model.py` deliberately does *not* get this
+      treatment** — `PuzzleFeedback.stars` measures "was this puzzle
+      enjoyable", not "was this puzzle's difficulty rating accurate";
+      there's no crowd-converged ground-truth rating for a personal
+      puzzle a 5-star vote could train toward. That model stays
+      Lichess-only, GBM swap aside.
   - **The rating regressor is wired into `game_import.py` (built)** —
     `find_blunders` takes an optional `rating_model` (a loaded
     `puzzle_rating_model` pipeline); when given, a candidate's `rating` is
@@ -1005,6 +1093,7 @@ uv run pytest
 
 # Puzzle-quality/rating models (Phase 2.5, see above) — not part of normal dev setup
 uv run python -m ml.build_training_dataset --sample-size 5000   # downloads the Lichess CSV on first run
+uv run python -m ml.build_personal_feedback_dataset              # real PuzzleFeedback votes, no CSV involved
 uv run python -m ml.puzzle_quality_model
 uv run python -m ml.puzzle_rating_model
 ```

@@ -89,6 +89,27 @@ class Settings(BaseSettings):
     # score to threshold, and find_blunders falls back to its simpler
     # forced+decisive-payoff gates alone, same as before this model existed.
     quality_score_threshold: float = 0.5
+    # How much a personal-feedback (puzzle_quality_model.extract_weights)
+    # training example counts once we're fully confident in the volume of
+    # personal feedback collected so far — same shrinkage shape
+    # GlickoRatingService already uses (a fraction that grows from 0 toward
+    # this ceiling as evidence accumulates, never quite reaching it).
+    # 10x a single Lichess example on purpose: personal feedback answers
+    # the exact question we care about (will *this* candidate, generated
+    # from *this* person's own games, feel satisfying to *them*) with none
+    # of the "crowd of strangers on a shared pool" proxy gap Lichess
+    # popularity has — worth more per data point once genuinely trusted,
+    # even though there will always be far fewer of them than Lichess rows.
+    personal_feedback_max_weight: float = 10.0
+    # The confidence curve is weight = n / (n + k) — at n=personal_feedback_k
+    # we're exactly half-confident; by roughly 3-5x this we're strongly
+    # weighting personal data. "A reasonable amount of data" is a genuine
+    # unknown right now (we don't have enough real feedback yet to derive
+    # this empirically the way other dials this session were) — 100 is a
+    # deliberately round, conservative starting guess, not a measured
+    # value; revisit once real votes accumulate and we can see how the
+    # model actually responds.
+    personal_feedback_k: int = 100
 
     # Delivery bandit (see delivery_bandit.py) — Bayesian linear regression
     # per arm over a 1-5 star reward. noise_variance is the assumed spread

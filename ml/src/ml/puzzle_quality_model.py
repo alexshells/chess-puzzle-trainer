@@ -6,10 +6,26 @@ difficulty can plausibly affect how many people like it) but not something
 puzzle_rating_model.py's sibling model can use, since there `rating` is the
 label being predicted, not an input.
 
-Logistic regression, not something bigger — deliberately. At this sample
-size (low thousands, one bootstrap source) a small linear model is less
-likely to overfit than gradient-boosted trees would be, and its
-coefficients are directly readable (see main()'s printed report).
+Gradient-boosted trees (sklearn's HistGradientBoostingClassifier — already a
+core dependency, nothing new to install), not logistic regression. Logistic
+regression was the original, deliberate choice back when the training set
+was a few thousand rows, reasoning that a small linear model was less likely
+to overfit than trees would be. At 51k+ rows that reasoning no longer holds,
+and a direct comparison (2026-09-11, same data, same split, sklearn's
+*default* hyperparameters — no tuning) confirmed it: logistic regression
+AUC 0.590 vs. gradient boosting AUC 0.627. The features already had more
+signal in them than a linear model could extract — this was a genuine
+model-capacity bottleneck, not a data or feature ceiling. See CLAUDE.md's
+Phase 2.5 note for the full write-up (it also covers the *other* two
+hypotheses — bigger sample, real motif detection — that this result argues
+against chasing next).
+
+Also trains on real personal-puzzle feedback now (`PuzzleFeedback.stars`,
+via build_personal_feedback_dataset.py), not just Lichess popularity — see
+extract_labels()/extract_weights(). Weighted, not a hard cutover: with zero
+personal feedback this behaves identically to Lichess-only training; its
+influence grows smoothly as real votes accumulate (config.py's
+personal_feedback_k/personal_feedback_max_weight).
 
 Run via `uv run python -m ml.puzzle_quality_model`.
 """
@@ -20,12 +36,13 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
+from ml.config import settings
 from ml.db import PuzzleQualityTrainingExample
 from ml.puzzle_features import CORE_FEATURE_NAMES, build_core_feature_matrix, core_features_from_analysis, load_examples
 from ml.puzzle_quality import PuzzleQualityAnalysis
@@ -48,40 +65,95 @@ def extract_popularity(examples: list[PuzzleQualityTrainingExample]) -> np.ndarr
     return np.array([ex.popularity for ex in examples], dtype=float)
 
 
-def train(X: np.ndarray, popularity: np.ndarray, *, test_size: float, seed: int) -> tuple[Pipeline, dict]:
+def extract_labels(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
     """
-    Labels on a median split of `popularity` within this sample, not a fixed
-    "> 0" cutoff. Lichess's puzzles are already curated/published, so almost
-    all of them sit well above zero (measured: 99.6% of a 5.6k sample had
-    Popularity > 0) — an absolute-zero threshold gives a label with almost no
-    negative class at all, which is a degenerate classification problem, not
-    a real one. "Relatively more/less popular than its peers in this sample"
-    is the honest question this dataset can actually answer.
+    Two different label rules by source, because the two sources answer two
+    different questions. Lichess rows: a median split of `popularity` within
+    the Lichess-only subset — "more/less popular than its peers", not a
+    fixed ">0" cutoff (see the docstring this replaced, and train()'s note
+    below for why). The median is computed over Lichess rows only, so it
+    doesn't drift as personal-feedback volume changes. Personal rows (source
+    == "personal"): `popularity` holds the raw 1-5 `PuzzleFeedback.stars`
+    value (see build_personal_feedback_dataset.py) — stars have a real,
+    fixed, human-legible meaning already established elsewhere in this
+    codebase (Puzzle::$discardedAt treats 1-2 stars as "bad, don't serve
+    again" and 3+ as acceptable — PuzzleFeedbackController), so a fixed
+    >=3 threshold is the right rule here, not a median split.
     """
-    y = (popularity > np.median(popularity)).astype(int)
+    lichess_popularity = [ex.popularity for ex in examples if ex.source == "lichess"]
+    median_pop = np.median(lichess_popularity) if lichess_popularity else 0.0
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=seed, stratify=y
-    )
-
-    pipeline = Pipeline(
+    return np.array(
         [
-            ("scale", StandardScaler()),
-            ("classify", LogisticRegression(max_iter=1000)),
+            (1 if ex.popularity >= 3 else 0) if ex.source == "personal" else (1 if ex.popularity > median_pop else 0)
+            for ex in examples
         ]
     )
-    pipeline.fit(X_train, y_train)
+
+
+def extract_weights(
+    examples: list[PuzzleQualityTrainingExample],
+    *,
+    k: int = settings.personal_feedback_k,
+    max_weight: float = settings.personal_feedback_max_weight,
+) -> np.ndarray:
+    """
+    Every Lichess example weighs 1.0. Every personal example weighs the
+    same shrinkage-curve amount — `n / (n + k)` fraction of max_weight,
+    where n is the total count of personal examples in this training run —
+    not weighted individually by e.g. how "confident" one particular vote
+    is, just collectively by how much personal feedback exists overall.
+    Same mathematical shape as GlickoRatingService's own confidence
+    blending: at n=0 the term is exactly 0 (zero personal examples means
+    zero influence, and this function would never even be called with any
+    in that case), it crosses half of max_weight at n=k, and it approaches
+    max_weight asymptotically as n grows — always leaving room to grow
+    further rather than snapping to "fully trusted" at some cutoff.
+    """
+    n_personal = sum(1 for ex in examples if ex.source == "personal")
+    personal_weight = (n_personal / (n_personal + k)) * max_weight if n_personal > 0 else 0.0
+
+    return np.array([personal_weight if ex.source == "personal" else 1.0 for ex in examples])
+
+
+def train(
+    X: np.ndarray, y: np.ndarray, *, test_size: float, seed: int, sample_weight: np.ndarray | None = None
+) -> tuple[Pipeline, dict]:
+    """
+    Takes already-binarized labels (see extract_labels()) and optional
+    per-row weights (see extract_weights()) rather than doing either
+    itself — both now depend on a row's `source`, which this function has
+    no reason to know about; it just fits whatever it's handed.
+    """
+    weights = sample_weight if sample_weight is not None else np.ones(len(y))
+
+    X_train, X_test, y_train, y_test, w_train, w_test = train_test_split(
+        X, y, weights, test_size=test_size, random_state=seed, stratify=y
+    )
+
+    pipeline = Pipeline([("classify", HistGradientBoostingClassifier(random_state=seed))])
+    pipeline.fit(X_train, y_train, classify__sample_weight=w_train)
 
     y_pred = pipeline.predict(X_test)
     y_proba = pipeline.predict_proba(X_test)[:, 1]
+
+    # HistGradientBoostingClassifier has no .coef_ (it's not linear) and no
+    # .feature_importances_ either (unlike sklearn's older GradientBoosting-
+    # Classifier) — permutation importance (how much shuffling one column
+    # hurts held-out AUC) is the standard substitute, and arguably more
+    # honest than a linear coefficient anyway, since it's measured on the
+    # actual held-out behavior rather than read off the fitted parameters.
+    importance = permutation_importance(
+        pipeline, X_test, y_test, n_repeats=10, random_state=seed, scoring="roc_auc"
+    )
 
     report = {
         "n_train": len(X_train),
         "n_test": len(X_test),
         "positive_rate": float(y.mean()),
-        "auc": roc_auc_score(y_test, y_proba),
-        "classification_report": classification_report(y_test, y_pred),
-        "coefficients": dict(zip(FEATURE_NAMES, pipeline.named_steps["classify"].coef_[0].tolist())),
+        "auc": roc_auc_score(y_test, y_proba, sample_weight=w_test),
+        "classification_report": classification_report(y_test, y_pred, sample_weight=w_test),
+        "permutation_importance": dict(zip(FEATURE_NAMES, importance.importances_mean.tolist())),
     }
     return pipeline, report
 
@@ -117,18 +189,27 @@ def main() -> None:
     args = parser.parse_args()
 
     examples = load_examples()
-    logger.info("Loaded %d training examples", len(examples))
+    n_personal = sum(1 for ex in examples if ex.source == "personal")
+    logger.info("Loaded %d training examples (%d personal, %d lichess)", len(examples), n_personal, len(examples) - n_personal)
     if len(examples) < 50:
         logger.warning("Very few examples — treat any metrics below as a pipeline smoke test, not a real result.")
 
     X = build_feature_matrix(examples)
-    popularity = extract_popularity(examples)
-    pipeline, report = train(X, popularity, test_size=args.test_size, seed=args.seed)
+    y = extract_labels(examples)
+    weights = extract_weights(examples)
+    if n_personal > 0:
+        confidence = n_personal / (n_personal + settings.personal_feedback_k)
+        logger.info(
+            "Personal feedback confidence: %.3f (n=%d, k=%d) -> per-example weight %.2f (vs. 1.0 for a Lichess row)",
+            confidence, n_personal, settings.personal_feedback_k, confidence * settings.personal_feedback_max_weight,
+        )
+
+    pipeline, report = train(X, y, test_size=args.test_size, seed=args.seed, sample_weight=weights)
 
     logger.info("n_train=%d n_test=%d positive_rate=%.3f", report["n_train"], report["n_test"], report["positive_rate"])
     logger.info("AUC: %.3f", report["auc"])
     logger.info("\n%s", report["classification_report"])
-    logger.info("Coefficients (standardized features): %s", report["coefficients"])
+    logger.info("Permutation importance (mean AUC drop when shuffled): %s", report["permutation_importance"])
 
     args.model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, args.model_path)

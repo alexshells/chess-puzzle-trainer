@@ -52,6 +52,16 @@ puzzle_table = Table(
     # (see Puzzle::$owner). The delivery bandit (delivery_service.py) only
     # ever selects from a single user's owned puzzles.
     Column("owner_id", Integer, nullable=True),
+    # fen/solution/external_id — added so build_personal_feedback_dataset.py
+    # can re-derive the exact same puzzle_quality.py features for a
+    # personal puzzle that build_training_dataset.py already computes for a
+    # Lichess row (same "FEN + setup move" shape, solution[0] being the
+    # setup move — see Puzzle's own class doc for the convention). Only
+    # ever populated for personal puzzles, same as owner_id.
+    Column("fen", String(100), nullable=False),
+    # JSON-encoded array of UCI moves — solution[0] is the setup move.
+    Column("solution", Text, nullable=False),
+    Column("external_id", String(255), nullable=True),
     # Puzzle-quality signals — see Puzzle::$forced/$setupSwingCp/$qualityScore
     # and CLAUDE.md's Phase 2.5 note. Read here for the bandit's
     # forced/clean and biggest-blunder arms; only ever populated for
@@ -78,15 +88,20 @@ puzzle_attempt_table = Table(
     Column("puzzle_id", Integer, ForeignKey("puzzle.id"), nullable=False),
 )
 
-# Thumbs up/down on "My Games" puzzles (backend's PuzzleFeedback entity) — the
-# label a future puzzle-quality model trains against, joined to this table's
-# PersonalPuzzleCandidate rows via puzzle.external_id (see that model's
-# docstring). Doctrine-owned like the tables above; ml/ only ever reads it.
+# A 1-5 star rating on a "My Games" puzzle (backend's PuzzleFeedback entity)
+# — the label build_personal_feedback_dataset.py trains against. Doctrine-
+# owned like the tables above; ml/ only ever reads it. This mirror sat
+# unused long enough to go stale — it originally modeled this as a
+# thumbs_up boolean, but the real, live schema (confirmed directly against
+# PuzzleFeedback.php and the actual table) has always been `stars: int`.
+# Caught only once this table got a real reader for the first time
+# (2026-09-11) — a reminder that an unread mirror can silently drift from
+# what it's mirroring.
 puzzle_feedback_table = Table(
     "puzzle_feedback",
     external_metadata,
     Column("id", Integer, primary_key=True),
-    Column("thumbs_up", Boolean, nullable=False),
+    Column("stars", Integer, nullable=False),
     Column("user_id", Integer, ForeignKey("user.id"), nullable=False),
     Column("puzzle_id", Integer, ForeignKey("puzzle.id"), nullable=False),
 )

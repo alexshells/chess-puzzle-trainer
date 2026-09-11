@@ -116,41 +116,28 @@ def test_predict_returns_a_plausible_rating_using_the_trained_pipeline():
     assert 1300 < predicted < 1700
 
 
-def test_predict_clamps_wild_extrapolations_to_a_plausible_range():
-    rng = np.random.default_rng(0)
-    n = 300
-    swing = rng.normal(0, 200, n)
-    X = np.column_stack(
-        [
-            swing,
-            rng.integers(0, 2, n),
-            rng.integers(0, 2, n),
-            rng.normal(0, 100, n),
-            rng.normal(0, 100, n),
-            rng.integers(0, 2, n),
-            rng.normal(0, 1, n),
-            rng.integers(0, 4, n),
-            rng.integers(0, 3, n),
-            rng.normal(0, 1, n),
-            rng.integers(0, 3, n),
-        ]
-    )
-    ratings = 1500 + swing * 2 + rng.normal(0, 50, n)
-    pipeline, _ = train(X, ratings, test_size=0.25, seed=0)
+def test_predict_clamps_an_out_of_range_prediction():
+    # Unlike the ridge regression this model replaced, a tree-based
+    # regressor's leaf predictions can't run away arbitrarily far outside
+    # the training data's own rating range — extrapolation isn't really
+    # the risk it used to be. The clamp is still a cheap, correct safety
+    # net worth keeping regardless, so test it directly against a fake
+    # model rather than relying on a real model happening to produce an
+    # extreme value.
+    class FakeModel:
+        def __init__(self, raw_prediction):
+            self._raw = raw_prediction
 
-    # Wildly out-of-distribution input — the raw linear extrapolation would
-    # blow past any realistic puzzle rating in either direction.
-    huge_swing = PuzzleQualityAnalysis(
-        puzzle_position_eval_cp=0, setup_swing_cp=100_000, forced=True, refutation_gap_cp=200, solving_pv=[]
-    )
-    tiny_swing = PuzzleQualityAnalysis(
-        puzzle_position_eval_cp=0, setup_swing_cp=-100_000, forced=True, refutation_gap_cp=200, solving_pv=[]
+        def predict(self, X):
+            return np.array([self._raw])
+
+    analysis = PuzzleQualityAnalysis(
+        puzzle_position_eval_cp=0, setup_swing_cp=0, forced=True, refutation_gap_cp=200, solving_pv=[]
     )
 
-    assert predict(pipeline, huge_swing) == MAX_RATING or predict(pipeline, huge_swing) == MIN_RATING
-    assert predict(pipeline, tiny_swing) == MAX_RATING or predict(pipeline, tiny_swing) == MIN_RATING
-    assert MIN_RATING <= predict(pipeline, huge_swing) <= MAX_RATING
-    assert MIN_RATING <= predict(pipeline, tiny_swing) <= MAX_RATING
+    assert predict(FakeModel(100_000), analysis) == MAX_RATING
+    assert predict(FakeModel(-100_000), analysis) == MIN_RATING
+    assert predict(FakeModel(1800), analysis) == 1800  # a plausible value passes through unchanged
 
 
 def test_try_load_returns_none_when_no_model_file_exists(tmp_path: Path):
