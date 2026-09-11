@@ -1,6 +1,6 @@
 import chess
 
-from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff
+from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material
 
 FORCED_GAP_CP = 100
 DECISIVE_MATERIAL_GAIN = 1
@@ -232,3 +232,19 @@ def test_find_decisive_payoff_only_checks_after_solver_moves():
 
     assert payoff.reached is True
     assert payoff.ply_index == 0  # found right after Qxd5, not walked further
+
+
+def test_total_material_sums_both_sides_excluding_kings():
+    # White: rook(5) + knight(3) = 8. Black: queen(9) + pawn(1) = 10. 18 total.
+    board = chess.Board(_FORK_FEN)
+
+    assert total_material(board) == 18
+
+
+def test_total_material_is_low_for_a_bare_endgame():
+    # White: king + knight(3) only. Black: king + pawn(1) only. 4 total —
+    # a real king-and-knight-vs-king-and-pawn study, the exact shape a real
+    # 51k-row Lichess sample showed has almost nothing left to capture.
+    board = chess.Board("8/8/8/6N1/5k1p/2K5/8/8 w - - 3 67")
+
+    assert total_material(board) == 4

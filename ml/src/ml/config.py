@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     # don't add anything a solver can verify once the real payoff already
     # landed. 1 means "any real material, even a single pawn, counts".
     decisive_material_gain: int = 1
+    # Total board material (both sides combined, puzzle_quality.total_material)
+    # at or below which find_blunders treats a candidate as a genuine
+    # endgame and exempts it from the decisive-payoff requirement above —
+    # forced alone is enough there. Verified against a real 51k-example
+    # Lichess sample (2026-09-11): puzzles with no decisive payoff are
+    # markedly enriched for low material (33% <=14 vs. 8% for puzzles that
+    # do have one), and inspecting actual examples confirmed why — a bare
+    # king-and-knight-vs-king-and-pawn study has almost nothing left to
+    # capture, so decisive_material_gain is close to structurally
+    # unsatisfiable there regardless of puzzle quality; the real payoff is
+    # technique (promoting, catching the pawn), not a capture. 20 sits
+    # between that sample's low-material band and a normal middlegame —
+    # empirically tunable, not derived from a formal cutoff.
+    endgame_material_threshold: int = 20
     # find_blunders rejects a candidate whose quality_model-predicted
     # quality_score falls below this — the model's own median-split
     # training framing ("more/less popular than its peers in this sample")

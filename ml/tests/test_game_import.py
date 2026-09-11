@@ -31,6 +31,11 @@ FORCED_GAP_CP = 100
 MAX_SOLVER_MOVES = 3
 DECISIVE_MATERIAL_GAIN = 1
 QUALITY_SCORE_THRESHOLD = 0.5
+# 0 disables the endgame exemption for every test that isn't specifically
+# about it — the fork/mate fixtures below (18 and 9 points of material
+# respectively) would otherwise trip it, since a real config default (see
+# config.py's endgame_material_threshold) is well above both.
+ENDGAME_MATERIAL_THRESHOLD = 0
 
 # 1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 — White ("player_one") "blunders" on move 3
 # per the fake engine's scripted evals below; the actual chess content only
@@ -168,6 +173,7 @@ def _find_fork_blunders(engine: FakeEngine, **overrides):
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
+        endgame_material_threshold=ENDGAME_MATERIAL_THRESHOLD,
     )
     kwargs.update(overrides)
     return find_blunders(**kwargs)
@@ -238,6 +244,7 @@ def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
+        endgame_material_threshold=ENDGAME_MATERIAL_THRESHOLD,
     )
 
     assert candidates == []
@@ -304,6 +311,30 @@ def test_rejects_a_candidate_when_the_solving_line_never_reaches_a_concrete_payo
     assert candidates == []
 
 
+def test_accepts_an_endgame_candidate_with_no_payoff_if_forced():
+    # Identical shape to the rejection test above — same quiet, no-capture
+    # line — but this time the puzzle position is treated as a genuine
+    # endgame (the fork fixture's 18 points of total material is at or
+    # below a real endgame_material_threshold like 20). There's often
+    # almost nothing left to capture in a real endgame study, so `forced`
+    # (already guaranteed true here) is accepted on its own — see
+    # config.py's endgame_material_threshold and the real 51k-row Lichess
+    # analysis behind it.
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, _QUIET_PV), (-90, [_PV_MOVE])],
+            (-300, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine, endgame_material_threshold=20)
+
+    assert len(candidates) == 1
+    # No payoff to truncate at — shows the full solver-move budget instead.
+    assert candidates[0].solution == ["a7a6"] + [m.uci() for m in _QUIET_PV]
+
+
 def test_solution_ends_the_moment_checkmate_is_delivered():
     # White's actual move (Ra3) misses a back-rank mate (Ra8#) that was
     # sitting right there — about as decisive a payoff as a puzzle gets, and
@@ -331,6 +362,7 @@ def test_solution_ends_the_moment_checkmate_is_delivered():
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
+        endgame_material_threshold=ENDGAME_MATERIAL_THRESHOLD,
     )
 
     assert len(candidates) == 1
@@ -371,6 +403,7 @@ def test_skips_blunders_in_an_already_lost_position():
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
+        endgame_material_threshold=ENDGAME_MATERIAL_THRESHOLD,
     )
 
     assert candidates == []
@@ -473,6 +506,7 @@ def test_ignores_games_the_target_did_not_play_in():
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
+        endgame_material_threshold=ENDGAME_MATERIAL_THRESHOLD,
     )
 
     assert candidates == []

@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, ScannedGame, SessionLocal
-from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff
+from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material
 from ml.puzzle_quality_model import predict as predict_quality
 from ml.puzzle_quality_model import try_load as try_load_quality_model
 from ml.puzzle_rating_model import predict as predict_rating
@@ -126,6 +126,7 @@ def find_blunders(
     max_solver_moves: int,
     decisive_material_gain: int,
     quality_score_threshold: float,
+    endgame_material_threshold: int,
     rating_model: Pipeline | None = None,
     quality_model: Pipeline | None = None,
 ) -> list[BlunderCandidate]:
@@ -149,7 +150,13 @@ def find_blunders(
     of real material actually won), via puzzle_quality.find_decisive_payoff,
     rather than padding out further with moves that don't give the solver
     anything to verify. A candidate whose solving_pv never reaches such a
-    payoff within the ply budget is rejected outright. Always ends on a
+    payoff within the ply budget is rejected outright — *unless* the puzzle
+    position is a genuine endgame (total board material at or below
+    endgame_material_threshold), where there's often almost nothing left to
+    capture and the real payoff is technique rather than a capture; `forced`
+    is already guaranteed true by this point, so an endgame candidate is
+    accepted on that alone, showing the full solver-move budget rather than
+    truncating at a payoff point that may not exist. Always ends on a
     solver move, never an auto-played reply (ChessBoard.vue expects that;
     see its handleMove()).
 
@@ -236,6 +243,18 @@ def find_blunders(
                         decisive_material_gain=decisive_material_gain,
                         max_plies=max_solving_plies,
                     )
+                    # A bare-material endgame (a king-and-knight-vs-king-and-
+                    # pawn study, say) has almost nothing left to *capture* —
+                    # decisive_material_gain is close to structurally
+                    # unsatisfiable there regardless of puzzle quality, and
+                    # the real payoff is technique (promoting, catching the
+                    # pawn), not a capture. Verified against a real 51k-row
+                    # Lichess sample: puzzles with no decisive payoff are
+                    # markedly enriched for low total material. `forced` is
+                    # already guaranteed true by this point, so an endgame
+                    # candidate is accepted on that alone — see
+                    # config.py's endgame_material_threshold.
+                    is_endgame = total_material(board) <= endgame_material_threshold
 
                     rating = (
                         round(predict_rating(rating_model, analysis))
@@ -252,8 +271,16 @@ def find_blunders(
                     # having been reached at all is still required (below).
                     quality_gate_passed = quality_score is None or quality_score >= quality_score_threshold
 
-                    if payoff.reached and quality_gate_passed:
-                        solution = [last_move.uci()] + [m.uci() for m in analysis.solving_pv[: payoff.ply_index + 1]]
+                    if (payoff.reached or is_endgame) and quality_gate_passed:
+                        # No natural stopping point to truncate at when
+                        # there's no payoff (the endgame-exemption case) —
+                        # show the full solver-move budget instead.
+                        solving_moves = (
+                            analysis.solving_pv[: payoff.ply_index + 1]
+                            if payoff.reached
+                            else analysis.solving_pv[:max_solving_plies]
+                        )
+                        solution = [last_move.uci()] + [m.uci() for m in solving_moves]
                         candidates.append(
                             BlunderCandidate(
                                 fen=fen_before_last_move,
@@ -484,6 +511,7 @@ def _process_one_game(
         max_solver_moves=settings.max_solver_moves,
         decisive_material_gain=settings.decisive_material_gain,
         quality_score_threshold=settings.quality_score_threshold,
+        endgame_material_threshold=settings.endgame_material_threshold,
         rating_model=rating_model,
         quality_model=quality_model,
     )

@@ -40,6 +40,27 @@ def _material_balance(board: chess.Board, color: chess.Color) -> int:
     return balance
 
 
+def total_material(board: chess.Board) -> int:
+    """
+    Both sides combined, in pawns (king excluded, standard values) — used to
+    tell a genuine endgame apart from a middlegame. Verified against a real
+    51k-example Lichess sample: puzzles with no decisive payoff (see
+    find_decisive_payoff) are markedly enriched for low total material —
+    33% have <=14 vs. 8% of puzzles that do have a payoff. Inspecting actual
+    examples confirmed why: a bare king-and-knight-vs-king-and-pawn study has
+    almost nothing left to *capture*, so decisive_material_gain is close to
+    structurally unsatisfiable there regardless of how good the puzzle is —
+    the real "payoff" is technique (promoting, or catching the pawn), not a
+    capture. See config.py's endgame_material_threshold and
+    game_import.py's use of this for the hard-gate exemption it justifies.
+    """
+    return sum(
+        value * len(board.pieces(piece_type, color))
+        for piece_type, value in _PIECE_VALUES.items()
+        for color in (chess.WHITE, chess.BLACK)
+    )
+
+
 @dataclass(frozen=True)
 class DecisivePayoff:
     """

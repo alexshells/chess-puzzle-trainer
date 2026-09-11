@@ -390,6 +390,45 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     resolves into anything concrete is rejected outright regardless of what
     a model would say — but *how much* material, and *how quickly*, are now
     also model features, not separately-thresholded gates.
+  - **Endgame puzzles are exempt from the decisive-payoff requirement**
+    (2026-09-11, `game_import.py`/`puzzle_quality.total_material`) — a real
+    finding from actually digging into the Lichess sample rather than
+    guessing at a fix: an initial hunch that "no material payoff" puzzles
+    might just need a *big eval gap* instead turned out **not** to hold —
+    among the 3,515/51,096 examples with no decisive payoff, popular and
+    unpopular ones have nearly identical `puzzle_position_eval_cp`
+    distributions (median ~190-200cp either way), so eval magnitude doesn't
+    discriminate at all. Pulling actual examples explained why: a bare
+    king-and-knight-vs-king-and-pawn study (`8/8/8/6N1/5k1p/2K5/8/8`, a real
+    row from the sample) has almost nothing left to *capture* —
+    `decisive_material_gain` is close to structurally unsatisfiable there
+    regardless of puzzle quality, since the real payoff is technique
+    (promoting, catching the pawn), not a capture. Confirmed with a cleaner
+    comparison: no-payoff puzzles are markedly enriched for low total board
+    material (`puzzle_quality.total_material`, both sides combined,
+    excluding kings) — 33% have <=14 points vs. 8% of puzzles that do have
+    a payoff. Also worth noting: the fix wasn't calibrated against
+    *popularity* at all, on purpose — every published Lichess puzzle is
+    already a legitimate candidate shape regardless of its vote count, so
+    "does this look like the shape of a real puzzle" (what the hard gates
+    decide) and "is this likely to be well-liked" (what `quality_score`
+    decides) are different questions needing different ground truth; using
+    popularity to calibrate a hard *acceptance* gate would have been
+    circular. Fix: `find_blunders` now computes
+    `is_endgame = total_material(board) <= endgame_material_threshold`
+    (20, `config.py` — empirically chosen, sitting between the sample's
+    low-material band and a normal middlegame) at the puzzle position, and
+    accepts a candidate on `payoff.reached or is_endgame` — `forced` is
+    already guaranteed true by that point in the gate sequence, so an
+    endgame candidate needs nothing more. No natural truncation point
+    exists for the no-payoff case, so the solution shows the full
+    `max_solver_moves` budget instead of cutting short at a payoff that may
+    not exist. Deliberately *not* threaded into `analyse_puzzle_quality`'s
+    stored `has_decisive_payoff` feature or the training dataset — that
+    stays the raw, honest "did the best line actually capture/mate" signal
+    regardless of how live candidates get gated; `is_endgame` as an actual
+    model feature (rather than a hard-gate exemption) is a reasonable
+    future extension, not done today.
   - **Bootstrap training data off Lichess's own puzzles**
     (`ml/src/ml/build_training_dataset.py`): our own `puzzle_feedback` vote
     count will be small for a long time, but Lichess's `Popularity` column
