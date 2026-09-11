@@ -17,10 +17,28 @@ Everything here is derived from just those two inputs, which is what keeps
 it usable for both a live chess.com game and a static Lichess CSV row alike.
 """
 
+import math
 from dataclasses import dataclass
 
 import chess
 import chess.engine
+
+# Ported directly from Lichess's own open-source puzzle generator
+# (github.com/ornicar/lichess-puzzler, generator/util.py) — see the
+# "Lichess Puzzle Generator" research note (CLAUDE.md's Phase 2.5 entry,
+# 2026-09-11) for the full writeup of why this matters. Raw centipawns are
+# not linear in how "decided" a position feels: the gap between +200 and
+# +400 is meaningful, but the gap between +2000 and +4000 (two different
+# ways of saying "hopeless") is not — this sigmoid squashes any score
+# (including mate_score-collapsed mate scores, which saturate to ±1.0 here
+# with room to spare) into a bounded, comparable win-probability-like scale.
+_WIN_CHANCES_MULTIPLIER = -0.00368208
+
+
+def win_chances(cp: int) -> float:
+    """A win-probability-like value in [-1, 1] — see module docstring above."""
+    return 2 / (1 + math.exp(_WIN_CHANCES_MULTIPLIER * cp)) - 1
+
 
 _PIECE_VALUES = {
     chess.PAWN: 1,
@@ -184,11 +202,26 @@ class PuzzleQualityAnalysis:
     # blunder having created the opportunity in the first place.
     setup_swing_cp: int
     # Whether the solving side has one clearly-best move (True) or several
-    # roughly-equal options (False) — see refutation_gap_cp.
+    # roughly-equal options (False) — decided in win-probability space (see
+    # win_chances above), not from refutation_gap_cp's raw cp margin
+    # directly. Why: under mate_score=100_000 collapsing, a real mate beats
+    # a merely-strong second-best move (say +450cp, already a clearly won
+    # position for practical purposes) by a huge raw cp margin — trivially
+    # "forced" under a flat cp threshold despite both moves being
+    # practically equivalent (this is the same "many roads lead to Rome"
+    # failure mode game_import.py's decided-position check exists to catch
+    # on the blunder-swing side; forced had the identical blind spot on the
+    # refutation side, just never diagnosed until reading Lichess's own
+    # generator). Verified against the real 51k-row Lichess sample
+    # (2026-09-11): re-deriving forced from win_chances at a 0.3 gap
+    # reclassifies 7.8% of previously-forced rows as not-forced — all cases
+    # where the runner-up move was itself already practically decisive.
     forced: bool
     # cp margin between the best move and the runner-up at the puzzle
     # position, per multipv=2. None when there was no second legal reply to
-    # compare against (trivially forced in that case).
+    # compare against (trivially forced in that case). Stored as raw cp —
+    # still a model feature (see puzzle_features.py) — even though `forced`
+    # itself is no longer derived from this directly (see forced's own note).
     refutation_gap_cp: int | None
     # Engine's suggested line from the puzzle position — solution[1:] for
     # whichever caller is building a playable puzzle out of this.
@@ -220,7 +253,7 @@ def analyse_puzzle_quality(
     engine: chess.engine.SimpleEngine,
     *,
     depth: int,
-    forced_gap_cp: int,
+    forced_win_chance_gap: float,
     decisive_material_gain: int,
 ) -> PuzzleQualityAnalysis | None:
     """
@@ -259,8 +292,13 @@ def analyse_puzzle_quality(
     )
     refutation_gap_cp = None if second_eval is None else puzzle_position_eval_cp - second_eval
     # No second legal reply to compare against is trivially forced;
-    # otherwise it's forced only if the gap clears the threshold.
-    forced = refutation_gap_cp is None or refutation_gap_cp >= forced_gap_cp
+    # otherwise it's forced only if the win-probability gap clears the
+    # threshold — see PuzzleQualityAnalysis.forced's docstring above for why
+    # this is win_chances space, not the raw refutation_gap_cp margin.
+    forced = (
+        second_eval is None
+        or win_chances(puzzle_position_eval_cp) - win_chances(second_eval) >= forced_win_chance_gap
+    )
 
     solving_pv = list(info_lines[0].get("pv", []))
     payoff = find_decisive_payoff(

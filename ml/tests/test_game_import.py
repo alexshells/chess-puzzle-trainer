@@ -27,7 +27,7 @@ import numpy as np
 from ml.game_import import _select_games_to_process, find_blunders
 
 TARGET = "player_one"
-FORCED_GAP_CP = 100
+FORCED_WIN_CHANCE_GAP = 0.3
 MAX_SOLVER_MOVES = 3
 DECISIVE_MATERIAL_GAIN = 1
 QUALITY_SCORE_THRESHOLD = 0.5
@@ -167,9 +167,9 @@ def _find_fork_blunders(engine: FakeEngine, **overrides):
         game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
-        blunder_threshold_cp=250,
+        win_chance_swing_threshold=0.6,
         decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
@@ -180,15 +180,16 @@ def _find_fork_blunders(engine: FakeEngine, **overrides):
 
 
 def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
-    # Puzzle-position eval drops from +15 (best line: the fork) to -300 (what
-    # White actually played, Rh4) — a 315cp swing, over blunder_threshold_cp.
-    # The runner-up move (-90) trails the best move (15) by 105cp — over the
-    # 100cp forced_gap_cp, so this counts as forced.
+    # Puzzle-position eval drops from +15 (best line: the fork) to -400 (what
+    # White actually played, Rh4) — a win_chances swing of ~0.65, over
+    # win_chance_swing_threshold (0.6). The runner-up move (-200) trails the
+    # best move (15) by a win_chances gap of ~0.38 — over
+    # forced_win_chance_gap (0.3), so this counts as forced.
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),  # pre-setup eval before Rh4 (unused by assertions)
-            [(15, _FORK_PV), (-90, [_PV_MOVE])],  # puzzle position (multipv=2) — best line is the fork
-            (-300, [_PV_MOVE]),  # after Rh4 (the actual blunder)
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],  # puzzle position (multipv=2) — best line is the fork
+            (-400, [_PV_MOVE]),  # after Rh4 (the actual blunder)
         ]
     )
 
@@ -204,20 +205,23 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     # the fork, its reply, and the capture that actually wins the queen.
     assert candidate.solution == ["a7a6", "h5f6", "e8f8", "f6d7"]
     assert candidate.forced is True
-    assert candidate.refutation_gap_cp == 105
+    assert candidate.refutation_gap_cp == 215
     assert candidate.setup_swing_cp == 200 - 15
 
 
 def test_rejects_a_candidate_that_is_still_completely_winning_afterward():
     # The puzzle position already has a forced mate available (99997 ~
     # mate in 3). White's actual move (Rh4) "only" leaves them up massive
-    # material (700), not mate — a swing of 99297 (trivially over
-    # blunder_threshold_cp), and the mate line beats the next-best
-    # non-mating line by 99397 (trivially "forced", since mate scores
-    # dwarf ordinary evals) — but practically nothing changed: White was
-    # completely winning before this move and completely winning after
-    # it. Not a fair teaching moment, and exactly the real complaint this
-    # gate fixes: "you're completely winning no matter what the move is."
+    # material (700), not mate — a raw swing of 99297 (trivially over the
+    # *old* flat blunder_threshold_cp), and the mate line beat the next-best
+    # non-mating line by a raw 99397cp (trivially "forced" under the old
+    # flat threshold too) — but practically nothing changed: White was
+    # completely winning before this move and completely winning after it.
+    # In win_chances space both effects vanish on their own: the swing is
+    # only ~0.14 (nowhere near win_chance_swing_threshold, 0.6) since mate
+    # and "merely" +700 both round to "totally winning" — no separate
+    # decided-position gate needed, this is the real fix for the original
+    # complaint: "you're completely winning no matter what the move is."
     engine = FakeEngine(
         [
             (99999, [_PV_MOVE]),  # pre-setup eval (unused)
@@ -233,15 +237,16 @@ def test_rejects_a_candidate_that_is_still_completely_winning_afterward():
 
 def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
     # Same shape as the forced case above, but the runner-up (0) trails the
-    # best move (15) by only 15cp — well under forced_gap_cp, so several
-    # moves win here (the "many roads lead to Rome" case, e.g. a drawn-out
-    # K+R-vs-K mate where several moves all win, just at different speeds).
-    # Not a fair puzzle to grade against one "correct" answer, so it should
-    # be rejected outright — even though the eval swing alone clears
-    # blunder_threshold_cp (15 - (-300) = 315 >= 250). Never reaches
-    # find_blunders' own decisive-payoff gate (rejected on forced first),
-    # but analyse_puzzle_quality always walks the best-line pv regardless —
-    # see _CP1_MOVE/_CP2_MOVE.
+    # best move (15) by a win_chances gap of only ~0.03 — well under
+    # forced_win_chance_gap (0.3), so several moves win here (the "many
+    # roads lead to Rome" case, e.g. a drawn-out K+R-vs-K mate where several
+    # moves all win, just at different speeds). Not a fair puzzle to grade
+    # against one "correct" answer, so it should be rejected outright — even
+    # though the win_chances swing on its own clears win_chance_swing_threshold
+    # (15 -> -400 is a ~0.65 swing). Never reaches find_blunders' own
+    # decisive-payoff gate (rejected on forced first), but
+    # analyse_puzzle_quality always walks the best-line pv regardless — see
+    # _CP1_MOVE/_CP2_MOVE.
     engine = FakeEngine(
         [
             (999, [_PV_MOVE]),  # pre-setup eval before Nf3
@@ -249,7 +254,7 @@ def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
             (10, [_PV_MOVE]),  # after Nf3
             (100, [_PV_MOVE]),  # pre-setup eval before Bxc6
             [(15, [_CP2_MOVE]), (0, [_PV_MOVE])],  # puzzle position before Bxc6 — not forced
-            (-300, [_PV_MOVE]),  # after Bxc6 — still evaluated, forced is checked last
+            (-400, [_PV_MOVE]),  # after Bxc6 — still evaluated, forced is checked last
         ]
     )
 
@@ -261,9 +266,9 @@ def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
         game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
-        blunder_threshold_cp=250,
+        win_chance_swing_threshold=0.6,
         decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
@@ -281,7 +286,7 @@ def test_marks_forced_when_there_is_no_second_legal_reply():
         [
             (50, [_PV_MOVE]),  # pre-setup eval before Rh4
             [(15, _FORK_PV)],  # puzzle position — single line
-            (-300, [_PV_MOVE]),  # after Rh4
+            (-400, [_PV_MOVE]),  # after Rh4
         ]
     )
 
@@ -303,8 +308,8 @@ def test_cuts_the_solution_short_once_a_decisive_payoff_is_reached():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, long_pv), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, long_pv), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -324,8 +329,8 @@ def test_rejects_a_candidate_when_the_solving_line_never_reaches_a_concrete_payo
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _QUIET_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _QUIET_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -346,8 +351,8 @@ def test_accepts_an_endgame_candidate_with_no_payoff_if_forced():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _QUIET_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _QUIET_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -379,9 +384,9 @@ def test_solution_ends_the_moment_checkmate_is_delivered():
         game_url="https://www.chess.com/game/live/99999",
         engine=engine,
         depth=1,
-        blunder_threshold_cp=250,
+        win_chance_swing_threshold=0.6,
         decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
@@ -420,9 +425,9 @@ def test_skips_blunders_in_an_already_lost_position():
         game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
-        blunder_threshold_cp=250,
+        win_chance_swing_threshold=0.6,
         decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,
@@ -436,8 +441,8 @@ def test_uses_the_rating_model_when_given_instead_of_player_rating():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _FORK_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -452,8 +457,8 @@ def test_computes_quality_score_when_a_quality_model_is_given():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _FORK_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -467,8 +472,8 @@ def test_quality_score_is_none_when_no_quality_model_is_given():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _FORK_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -487,8 +492,8 @@ def test_rejects_a_candidate_the_quality_model_scores_below_threshold():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _FORK_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -501,8 +506,8 @@ def test_accepts_a_candidate_exactly_at_the_quality_threshold():
     engine = FakeEngine(
         [
             (200, [_PV_MOVE]),
-            [(15, _FORK_PV), (-90, [_PV_MOVE])],
-            (-300, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
         ]
     )
 
@@ -523,9 +528,9 @@ def test_ignores_games_the_target_did_not_play_in():
         game_url="https://www.chess.com/game/live/12345",
         engine=engine,
         depth=1,
-        blunder_threshold_cp=250,
+        win_chance_swing_threshold=0.6,
         decided_position_cp=600,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
         quality_score_threshold=QUALITY_SCORE_THRESHOLD,

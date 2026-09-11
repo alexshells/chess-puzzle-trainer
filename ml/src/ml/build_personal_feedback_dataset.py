@@ -38,7 +38,7 @@ def build_dataset(
     engine: chess.engine.SimpleEngine,
     *,
     depth: int,
-    forced_gap_cp: int,
+    forced_win_chance_gap: float,
     decisive_material_gain: int,
 ) -> tuple[int, int]:
     """
@@ -92,7 +92,7 @@ def build_dataset(
                 setup_move,
                 engine,
                 depth=depth,
-                forced_gap_cp=forced_gap_cp,
+                forced_win_chance_gap=forced_win_chance_gap,
                 decisive_material_gain=decisive_material_gain,
             )
             if analysis is None:
@@ -142,7 +142,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--depth", type=int, default=settings.stockfish_depth)
-    parser.add_argument("--forced-gap-cp", type=int, default=settings.forced_gap_cp)
+    parser.add_argument("--forced-win-chance-gap", type=float, default=settings.forced_win_chance_gap)
     parser.add_argument("--decisive-material-gain", type=int, default=settings.decisive_material_gain)
     args = parser.parse_args()
 
@@ -151,7 +151,7 @@ def main() -> None:
         added, skipped = build_dataset(
             engine,
             depth=args.depth,
-            forced_gap_cp=args.forced_gap_cp,
+            forced_win_chance_gap=args.forced_win_chance_gap,
             decisive_material_gain=args.decisive_material_gain,
         )
     finally:

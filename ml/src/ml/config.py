@@ -24,7 +24,21 @@ class Settings(BaseSettings):
     stockfish_path: str = "stockfish"
     max_games_per_run: int = 50
     stockfish_depth: int = 12
-    blunder_threshold_cp: int = 250
+    # How much a candidate's win probability must drop, from the target's
+    # own POV, as a direct result of their real next move — computed via
+    # puzzle_quality.win_chances(), not raw centipawns (2026-09-11, see
+    # CLAUDE.md's "Lichess Puzzle Generator" research note). Ported directly
+    # from Lichess's own generator's swing check
+    # (win_chances(score) > win_chances(prev_score) + 0.6) — the two checks
+    # play an identical structural role (did the practical outcome actually
+    # change), so their tuned value is adopted as-is rather than re-derived.
+    # This single check replaces what used to be two separate raw-cp gates
+    # (a swing-magnitude threshold, plus a second "and still isn't decided
+    # afterward" check) — a swing from "mate-in-4" to "merely up a rook" is
+    # a huge raw cp number under mate_score scaling but a near-zero
+    # win-probability change, so it's correctly rejected by this one
+    # condition without needing the second gate at all.
+    win_chance_swing_threshold: float = 0.6
     # Skip blunders piled onto an *extremely* decided position (a real mate
     # sequence already on the board, say) — purely a compute-saving sanity
     # check now, not the actual "was this practically already lost" quality
@@ -36,17 +50,36 @@ class Settings(BaseSettings):
     # a guessed number. Kept loose on purpose — this only exists to avoid
     # wasting a Stockfish "after" call on a position that's obviously over.
     decided_position_cp: int = 600
-    # How much the best move at the puzzle position must beat the second-best
-    # by (per multipv=2 analysis) to count as a "forced" — i.e. genuinely
-    # unique — refutation, not just one of several ways to win. A hard gate
-    # in find_blunders (see game_import.py): a candidate whose gap falls
-    # short of this isn't accepted at all, since "several moves work here" —
-    # a drawn-out mating sequence with many winning tries is the clearest
-    # example — isn't a fair puzzle to grade against one specific answer.
-    # Still also stored on PersonalPuzzleCandidate for the (currently
-    # unwired) delivery bandit's best_quality/forced_clean arms — see
-    # CLAUDE.md's Phase 2.5/2.6 notes.
-    forced_gap_cp: int = 100
+    # How much the best move at the puzzle position must beat the
+    # second-best by, in win-probability space (win_chances gap, not raw
+    # cp), to count as a "forced" — i.e. genuinely unique — refutation, not
+    # just one of several ways to win. A hard gate in find_blunders (see
+    # game_import.py): a candidate whose gap falls short of this isn't
+    # accepted at all, since "several moves work here" — a drawn-out mating
+    # sequence with many winning tries is the clearest example — isn't a
+    # fair puzzle to grade against one specific answer. Switched from a flat
+    # 100cp margin to win_chances space 2026-09-11 for the same reason as
+    # win_chance_swing_threshold above: a real mate beats a merely-strong
+    # second-best move (+450cp, already a clearly won position practically)
+    # by a huge raw cp margin under mate_score scaling, trivially "forced"
+    # under the old flat threshold despite both moves being practically
+    # equivalent. 0.3, unlike win_chance_swing_threshold, *is* independently
+    # derived from real data rather than adopted from Lichess's own 0.7 —
+    # their forced-check runs deeper in their pipeline, after other gates
+    # already confirmed a clearly decisive position, so their tuned value
+    # isn't a fair transplant here. Checked directly against the real
+    # 51,096-row Lichess sample: re-deriving forced at a 0.3 win_chances gap
+    # keeps 96.2% of already-forced=True rows forced (consistent with them
+    # being real, legitimately-forced published puzzles) while correctly
+    # reclassifying the other 3.8% — inspected by hand, and confirmed every
+    # one is the "second-best move was itself already practically decisive"
+    # pattern this change exists to fix. Lichess's own 0.7 would have
+    # rejected 28% of the same already-curated puzzles as "not forced" —
+    # too strict for how this check is actually positioned in our pipeline.
+    # Still also stored (as refutation_gap_cp, raw cp) on
+    # PersonalPuzzleCandidate for the (currently unwired) delivery bandit's
+    # best_quality/forced_clean arms — see CLAUDE.md's Phase 2.5/2.6 notes.
+    forced_win_chance_gap: float = 0.3
     # How many of the solver's own moves a generated puzzle's solution can
     # require, at most — a puzzle always ends on a solver move (never an
     # auto-played opponent reply), so this caps solving_pv at

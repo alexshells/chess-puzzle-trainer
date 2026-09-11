@@ -74,7 +74,7 @@ def build_dataset(
     engine: chess.engine.SimpleEngine,
     *,
     depth: int,
-    forced_gap_cp: int,
+    forced_win_chance_gap: float,
     decisive_material_gain: int,
 ) -> tuple[int, int]:
     """
@@ -105,7 +105,7 @@ def build_dataset(
                 setup_move,
                 engine,
                 depth=depth,
-                forced_gap_cp=forced_gap_cp,
+                forced_win_chance_gap=forced_win_chance_gap,
                 decisive_material_gain=decisive_material_gain,
             )
             if analysis is None:
@@ -152,7 +152,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample-size", type=int, default=500)
     parser.add_argument("--depth", type=int, default=10, help="Lower than the live import's depth (12) — this runs Stockfish on many more positions offline, where speed matters more than the last bit of accuracy")
-    parser.add_argument("--forced-gap-cp", type=int, default=settings.forced_gap_cp)
+    parser.add_argument("--forced-win-chance-gap", type=float, default=settings.forced_win_chance_gap)
     parser.add_argument("--decisive-material-gain", type=int, default=settings.decisive_material_gain)
     parser.add_argument("--csv-path", type=Path, default=_DEFAULT_CSV_PATH)
     parser.add_argument("--seed", type=int, default=0)
@@ -171,7 +171,7 @@ def main() -> None:
             sample,
             engine,
             depth=args.depth,
-            forced_gap_cp=args.forced_gap_cp,
+            forced_win_chance_gap=args.forced_win_chance_gap,
             decisive_material_gain=args.decisive_material_gain,
         )
     finally:

@@ -44,7 +44,7 @@ from sqlalchemy.orm import Session
 
 from ml.config import settings
 from ml.db import GameImportProgress, PersonalPuzzleCandidate, ScannedGame, SessionLocal
-from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material
+from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material, win_chances
 from ml.puzzle_quality_model import predict as predict_quality
 from ml.puzzle_quality_model import try_load as try_load_quality_model
 from ml.puzzle_rating_model import predict as predict_rating
@@ -78,7 +78,9 @@ class BlunderCandidate:
     # move at the puzzle position clearly beats the next-best alternative
     # (or there simply wasn't a second legal reply); `refutation_gap_cp` is
     # the raw margin, `None` when there was only one legal reply to compare
-    # against (see config.py's forced_gap_cp for the margin used). `setup_swing_cp`
+    # against (see config.py's forced_win_chance_gap for the margin used,
+    # applied in win-probability space — see puzzle_quality.win_chances).
+    # `setup_swing_cp`
     # is how much the position dropped, from the blundering side's own POV,
     # purely from playing the setup move (last_move) — independent of what
     # target did next.
@@ -120,9 +122,9 @@ def find_blunders(
     engine: chess.engine.SimpleEngine,
     *,
     depth: int,
-    blunder_threshold_cp: int,
+    win_chance_swing_threshold: float,
     decided_position_cp: int,
-    forced_gap_cp: int,
+    forced_win_chance_gap: float,
     max_solver_moves: int,
     decisive_material_gain: int,
     quality_score_threshold: float,
@@ -132,24 +134,32 @@ def find_blunders(
 ) -> list[BlunderCandidate]:
     """
     Walks one game, evaluating the position before and after every move the
-    target player made. A candidate is a swing >= blunder_threshold_cp that
-    didn't happen in an extremely decided position (decided_position_cp is
-    a loose compute-saving sanity check now, not the real quality judgment
-    — see config.py) *and* didn't leave the position still just as decided
-    afterward — the same decided_position_cp bar applied to eval_after,
-    since a swing from "mate-in-4" to "merely up a rook" clears
-    blunder_threshold_cp easily (mate scores dwarf ordinary evals) despite
-    the target being completely winning no matter what they played; the
-    before-side check stays deliberately one-sided (a blunder that throws
-    away a real winning position into an actual loss is exactly what this
-    should find), it's only the after-side that also needs to have genuinely
-    left the decided zone. Also requires analyse_puzzle_quality's `forced`
-    to be True — a candidate with more than one adequate reply
-    (refutation_gap_cp under forced_gap_cp, e.g. several moves that all win
-    a drawn-out K+R-vs-K endgame, just at different speeds) isn't a fair
-    puzzle: there's no single "the" correct answer to grade against. All
-    three of these are hard gates — closer to logical requirements than
-    preferences a model should override.
+    target player made. A candidate is a genuine win-probability swing — see
+    puzzle_quality.win_chances, ported from Lichess's own open-source
+    generator (CLAUDE.md's "Lichess Puzzle Generator" research note,
+    2026-09-11) — of at least win_chance_swing_threshold between
+    puzzle_position_eval_cp (target's POV, right after the opponent's move)
+    and eval_after (target's POV, after the target's own real next move).
+    Raw centipawns are not linear in how decided a position feels: a swing
+    from "mate-in-4" to "merely up a rook" is a huge number under
+    mate_score scaling despite the target being completely winning no
+    matter what they played, and win_chances collapses both ends of that
+    swing to nearly the same value, correctly rejecting it — this one check
+    replaces what used to be two separate raw-cp gates (a swing-magnitude
+    threshold, plus a second "and still isn't decided afterward" check).
+    decided_position_cp remains a *separate*, deliberately loose,
+    compute-saving pre-filter on the BEFORE eval only (see config.py) — a
+    blunder that throws away a real winning position into an actual loss is
+    exactly what this should find, so that side stays one-sided on purpose;
+    it just isn't the mechanism that decides "did the outcome really
+    change" anymore. Also requires analyse_puzzle_quality's `forced` to be
+    True — a candidate with more than one adequate reply (win_chances gap
+    under forced_win_chance_gap, e.g. several moves that all win a
+    drawn-out K+R-vs-K endgame, just at different speeds, or a mate that
+    only barely beats an already-crushing alternative) isn't a fair puzzle:
+    there's no single "the" correct answer to grade against. All of these
+    are hard gates — closer to logical requirements than preferences a
+    model should override.
 
     A candidate's solution is truncated to at most max_solver_moves of the
     solver's own moves (2 * max_solver_moves - 1 plies of solving_pv) — see
@@ -215,7 +225,7 @@ def find_blunders(
                 last_move.uci(),
                 engine,
                 depth=depth,
-                forced_gap_cp=forced_gap_cp,
+                forced_win_chance_gap=forced_win_chance_gap,
                 decisive_material_gain=decisive_material_gain,
             )
 
@@ -231,24 +241,18 @@ def find_blunders(
 
                 if (
                     eval_after is not None
-                    and analysis.puzzle_position_eval_cp - eval_after >= blunder_threshold_cp
-                    # The swing must represent a genuine change in practical
-                    # outcome, not just a big number — a real complaint: a
-                    # position that was already crushing (mate-in-4, say)
-                    # dropping to "merely" up a rook is still a >99,000cp
-                    # swing under mate_score scaling, clears the threshold
-                    # easily, and can even look "forced" (a mate line's cp
-                    # score dwarfs any non-mating alternative's), despite
-                    # the target being completely winning no matter what
-                    # they played. decided_position_cp is already the
-                    # "outcome is effectively decided" bar for the BEFORE
-                    # eval (one-sided there on purpose — a blunder that
-                    # throws away a winning position into a real loss is
-                    # exactly what this should find); applying the same bar
-                    # to the AFTER eval catches the mirror case, where the
-                    # outcome was decided both before and after and nothing
-                    # practical actually turned on this move.
-                    and eval_after < decided_position_cp
+                    # Win-probability swing, not raw centipawns — see this
+                    # function's docstring and config.py's
+                    # win_chance_swing_threshold. Ported from Lichess's own
+                    # generator (win_chances(score) > win_chances(prev_score)
+                    # + 0.6); replaces what used to be two separate raw-cp
+                    # gates (a swing-magnitude threshold, plus a second
+                    # "and still isn't decided afterward" check) with one —
+                    # a swing from "mate-in-4" to "merely up a rook" is a
+                    # near-zero win-probability change and is correctly
+                    # rejected by this single condition.
+                    and win_chances(analysis.puzzle_position_eval_cp) - win_chances(eval_after)
+                    >= win_chance_swing_threshold
                     # A candidate needs exactly one right answer to be a fair
                     # puzzle — reject "many roads lead to Rome" positions (a
                     # drawn-out K+R-vs-K mate, say, where several moves all
@@ -530,9 +534,9 @@ def _process_one_game(
         game["url"],
         engine,
         depth=settings.stockfish_depth,
-        blunder_threshold_cp=settings.blunder_threshold_cp,
+        win_chance_swing_threshold=settings.win_chance_swing_threshold,
         decided_position_cp=settings.decided_position_cp,
-        forced_gap_cp=settings.forced_gap_cp,
+        forced_win_chance_gap=settings.forced_win_chance_gap,
         max_solver_moves=settings.max_solver_moves,
         decisive_material_gain=settings.decisive_material_gain,
         quality_score_threshold=settings.quality_score_threshold,

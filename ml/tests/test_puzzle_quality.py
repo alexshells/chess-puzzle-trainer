@@ -2,7 +2,7 @@ import chess
 
 from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, tactical_sharpness, total_material
 
-FORCED_GAP_CP = 100
+FORCED_WIN_CHANCE_GAP = 0.3
 DECISIVE_MATERIAL_GAIN = 1
 
 # Any legal position works — analyse_puzzle_quality doesn't inspect the
@@ -44,10 +44,14 @@ class FakeEngine:
 
 
 def test_computes_setup_swing_and_forced_refutation():
+    # best=600, second=0 — a win_chances gap of ~0.80, comfortably over
+    # FORCED_WIN_CHANCE_GAP (0.3): a clearly winning move vs. a roughly
+    # equal alternative is genuinely forced, unlike two moves that are both
+    # merely close to equality (see test_not_forced_when_runner_up_is_close).
     engine = FakeEngine(
         [
             (40, [_PV_MOVE]),  # eval before the setup move, blunderer's POV
-            [(15, [_PV_MOVE]), (-90, [_PV_MOVE])],  # at the puzzle position, multipv=2
+            [(600, [_PV_MOVE]), (0, [_PV_MOVE])],  # at the puzzle position, multipv=2
         ]
     )
 
@@ -56,14 +60,14 @@ def test_computes_setup_swing_and_forced_refutation():
         SETUP_MOVE,
         engine,
         depth=1,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
     assert analysis is not None
-    assert analysis.puzzle_position_eval_cp == 15
-    assert analysis.setup_swing_cp == 40 - 15
-    assert analysis.refutation_gap_cp == 105
+    assert analysis.puzzle_position_eval_cp == 600
+    assert analysis.setup_swing_cp == 40 - 600
+    assert analysis.refutation_gap_cp == 600
     assert analysis.forced is True
     assert analysis.solving_pv == [_PV_MOVE]
     # e7e5 (the scripted "best line") doesn't capture anything — no payoff.
@@ -72,10 +76,13 @@ def test_computes_setup_swing_and_forced_refutation():
 
 
 def test_not_forced_when_runner_up_is_close():
+    # best=15, second=0 — both near equality, so even though the raw cp gap
+    # (15) would once have been compared against a flat threshold, the
+    # win_chances gap here is ~0.03 — nowhere near FORCED_WIN_CHANCE_GAP.
     engine = FakeEngine(
         [
             (40, [_PV_MOVE]),
-            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],  # gap of 15 — under forced_gap_cp
+            [(15, [_PV_MOVE]), (0, [_PV_MOVE])],
         ]
     )
 
@@ -84,12 +91,43 @@ def test_not_forced_when_runner_up_is_close():
         SETUP_MOVE,
         engine,
         depth=1,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
     assert analysis is not None
     assert analysis.refutation_gap_cp == 15
+    assert analysis.forced is False
+
+
+def test_not_forced_when_second_best_is_also_practically_decisive():
+    # The real-data-motivated case: best is a forced mate (mate_score
+    # collapses it to a huge raw cp), second-best is "merely" +600 — a
+    # position most players would already consider clearly won. The raw cp
+    # gap here is enormous (over 99,000), which the old flat-threshold check
+    # would have called trivially forced; in win-probability space the gap
+    # is only ~0.20, correctly reflecting that both moves are practically
+    # winning — "several roads lead to Rome," the same failure mode the
+    # blunder-swing check's decided-position fix addresses on the other
+    # side of this pipeline.
+    engine = FakeEngine(
+        [
+            (40, [_PV_MOVE]),
+            [(99_997, [_PV_MOVE]), (600, [_PV_MOVE])],
+        ]
+    )
+
+    analysis = analyse_puzzle_quality(
+        FEN_BEFORE_SETUP,
+        SETUP_MOVE,
+        engine,
+        depth=1,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
+        decisive_material_gain=DECISIVE_MATERIAL_GAIN,
+    )
+
+    assert analysis is not None
+    assert analysis.refutation_gap_cp == 99_997 - 600
     assert analysis.forced is False
 
 
@@ -106,7 +144,7 @@ def test_forced_when_no_second_legal_reply():
         SETUP_MOVE,
         engine,
         depth=1,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
@@ -126,7 +164,7 @@ def test_returns_none_when_setup_position_has_no_legal_moves():
         "f1g2",
         engine,
         depth=1,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 
@@ -154,7 +192,7 @@ def test_computes_a_decisive_payoff_when_the_best_line_actually_wins_material():
         "a7a6",
         engine,
         depth=1,
-        forced_gap_cp=FORCED_GAP_CP,
+        forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
     )
 

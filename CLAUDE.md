@@ -705,6 +705,71 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     `find_blunders` itself is the primary consumer: a candidate whose
     `quality_score` falls below `quality_score_threshold` is rejected
     outright, not just scored for later. See the hard-gate bullet above.
+  - **The blunder-swing and forced gates now compare win probabilities, not
+    raw centipawns** (2026-09-11, `puzzle_quality.win_chances`,
+    `game_import.py`, `config.py`) — ported directly from Lichess's own
+    open-source puzzle generator (`ornicar/lichess-puzzler`) after reading
+    its source end to end (see the "Lichess Puzzle Generator" research
+    artifact this session, and the earlier "Puzzle Quality Prior Art"
+    survey that first surfaced it). `win_chances(cp)` is their exact sigmoid
+    (`2 / (1 + exp(-0.00368208 * cp)) - 1`, from `generator/util.py`) —
+    raw centipawns aren't linear in how decided a position feels (the gap
+    between +200 and +400 matters; the gap between +2000 and +4000 doesn't),
+    which is exactly why the 2026-09-11 "still completely winning either
+    way" fix (puzzle #43, earlier in this phase) needed a second, separate
+    cp-based gate bolted onto the first — win_chances fixes the root cause
+    instead of patching the symptom.
+    - **Blunder-swing gate**: `win_chances(puzzle_position_eval_cp) -
+      win_chances(eval_after) >= win_chance_swing_threshold` (0.6, adopted
+      as-is from Lichess's own tuned value — their swing check
+      (`win_chances(score) > win_chances(prev_score) + 0.6`) plays an
+      identical structural role to ours, so their tuned constant is a fair
+      transplant) now *replaces* what used to be two separate raw-cp gates
+      (a swing-magnitude threshold, plus the `eval_after < decided_position_cp`
+      check added earlier this session for puzzle #43) with one. A swing
+      from mate-in-4 to "merely" up a rook is tens of thousands of cp under
+      `mate_score` scaling but a near-zero win_chances change, and is
+      correctly rejected by this single condition — verified directly:
+      re-running the `test_rejects_a_candidate_that_is_still_completely_winning_afterward`
+      scenario shows the swing alone (~0.14) fails `win_chance_swing_threshold`
+      with no decided-position check needed at all.
+      `decided_position_cp` (600) still exists, but only for its original,
+      separate, deliberately loose *before*-side compute-saving pre-filter
+      (`puzzle_position_eval_cp > -decided_position_cp`, skip an obviously-
+      hopeless-for-the-solver position before paying for an "after" engine
+      call) — it no longer has any role in deciding whether the outcome
+      actually changed.
+    - **Forced gate**: `analyse_puzzle_quality`'s `forced` is now
+      `win_chances(puzzle_position_eval_cp) - win_chances(second_eval) >=
+      forced_win_chance_gap` instead of a flat `refutation_gap_cp >= 100cp`
+      margin — the same root-cause fix applied to the *other* place mate
+      scores dwarf ordinary evals: a real forced mate trivially "beats" a
+      merely-strong second-best move (say +450cp, already a clearly won
+      position practically) by a huge raw cp margin, which the old flat
+      threshold called trivially forced despite both moves being
+      practically equivalent — the identical "many roads lead to Rome"
+      failure mode already fixed on the blunder-swing side, just never
+      diagnosed on this side until reading Lichess's own generator.
+      Unlike the swing threshold, `forced_win_chance_gap` (0.3) was **not**
+      adopted from Lichess's own value (0.7) — checked directly against the
+      real 51,096-row local Lichess sample first (their forced-check runs
+      deeper in their own pipeline, after other gates already confirmed a
+      clearly decisive position, so 0.7 isn't a fair transplant onto a
+      check we apply earlier and more broadly): at 0.7, 28% of
+      already-published, already-curated Lichess puzzles would have been
+      newly rejected as "not forced" — clearly too strict. At 0.3, 96.2% of
+      previously-forced rows stay forced (consistent with them being real,
+      legitimately-forced puzzles), while the other 3.8% get correctly
+      reclassified — inspected by hand, every one is the "second-best move
+      was itself already practically decisive" pattern this change exists
+      to fix.
+    - **`refutation_gap_cp`/`setup_swing_cp`/`puzzle_position_eval_cp`
+      themselves are unchanged** — still stored as raw cp, still the exact
+      features `puzzle_quality_model`/`puzzle_rating_model` already train
+      on. Only the *derivation* of the `forced` boolean and the
+      accept/reject decision in `find_blunders` moved to win_chances space;
+      no model retraining was needed, and no new Alembic migration either
+      (no new columns).
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random
