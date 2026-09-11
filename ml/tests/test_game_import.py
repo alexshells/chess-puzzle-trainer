@@ -208,6 +208,29 @@ def test_flags_a_move_that_drops_eval_past_the_threshold_and_marks_it_forced():
     assert candidate.setup_swing_cp == 200 - 15
 
 
+def test_rejects_a_candidate_that_is_still_completely_winning_afterward():
+    # The puzzle position already has a forced mate available (99997 ~
+    # mate in 3). White's actual move (Rh4) "only" leaves them up massive
+    # material (700), not mate — a swing of 99297 (trivially over
+    # blunder_threshold_cp), and the mate line beats the next-best
+    # non-mating line by 99397 (trivially "forced", since mate scores
+    # dwarf ordinary evals) — but practically nothing changed: White was
+    # completely winning before this move and completely winning after
+    # it. Not a fair teaching moment, and exactly the real complaint this
+    # gate fixes: "you're completely winning no matter what the move is."
+    engine = FakeEngine(
+        [
+            (99999, [_PV_MOVE]),  # pre-setup eval (unused)
+            [(99997, _FORK_PV), (600, [_PV_MOVE])],  # puzzle position — mate available
+            (700, [_PV_MOVE]),  # after Rh4 — still crushing, just not mate
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
+
+    assert candidates == []
+
+
 def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
     # Same shape as the forced case above, but the runner-up (0) trails the
     # best move (15) by only 15cp — well under forced_gap_cp, so several

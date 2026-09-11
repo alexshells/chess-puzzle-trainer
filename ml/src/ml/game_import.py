@@ -135,13 +135,21 @@ def find_blunders(
     target player made. A candidate is a swing >= blunder_threshold_cp that
     didn't happen in an extremely decided position (decided_position_cp is
     a loose compute-saving sanity check now, not the real quality judgment
-    — see config.py). Also requires analyse_puzzle_quality's `forced` to be
-    True — a candidate with more than one adequate reply (refutation_gap_cp
-    under forced_gap_cp, e.g. several moves that all win a drawn-out
-    K+R-vs-K endgame, just at different speeds) isn't a fair puzzle: there's
-    no single "the" correct answer to grade against. Both of these are hard
-    gates — closer to logical requirements than preferences a model should
-    override.
+    — see config.py) *and* didn't leave the position still just as decided
+    afterward — the same decided_position_cp bar applied to eval_after,
+    since a swing from "mate-in-4" to "merely up a rook" clears
+    blunder_threshold_cp easily (mate scores dwarf ordinary evals) despite
+    the target being completely winning no matter what they played; the
+    before-side check stays deliberately one-sided (a blunder that throws
+    away a real winning position into an actual loss is exactly what this
+    should find), it's only the after-side that also needs to have genuinely
+    left the decided zone. Also requires analyse_puzzle_quality's `forced`
+    to be True — a candidate with more than one adequate reply
+    (refutation_gap_cp under forced_gap_cp, e.g. several moves that all win
+    a drawn-out K+R-vs-K endgame, just at different speeds) isn't a fair
+    puzzle: there's no single "the" correct answer to grade against. All
+    three of these are hard gates — closer to logical requirements than
+    preferences a model should override.
 
     A candidate's solution is truncated to at most max_solver_moves of the
     solver's own moves (2 * max_solver_moves - 1 plies of solving_pv) — see
@@ -224,6 +232,23 @@ def find_blunders(
                 if (
                     eval_after is not None
                     and analysis.puzzle_position_eval_cp - eval_after >= blunder_threshold_cp
+                    # The swing must represent a genuine change in practical
+                    # outcome, not just a big number — a real complaint: a
+                    # position that was already crushing (mate-in-4, say)
+                    # dropping to "merely" up a rook is still a >99,000cp
+                    # swing under mate_score scaling, clears the threshold
+                    # easily, and can even look "forced" (a mate line's cp
+                    # score dwarfs any non-mating alternative's), despite
+                    # the target being completely winning no matter what
+                    # they played. decided_position_cp is already the
+                    # "outcome is effectively decided" bar for the BEFORE
+                    # eval (one-sided there on purpose — a blunder that
+                    # throws away a winning position into a real loss is
+                    # exactly what this should find); applying the same bar
+                    # to the AFTER eval catches the mirror case, where the
+                    # outcome was decided both before and after and nothing
+                    # practical actually turned on this move.
+                    and eval_after < decided_position_cp
                     # A candidate needs exactly one right answer to be a fair
                     # puzzle — reject "many roads lead to Rome" positions (a
                     # drawn-out K+R-vs-K mate, say, where several moves all

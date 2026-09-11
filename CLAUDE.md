@@ -568,6 +568,27 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     these back for a live candidate, they're computed fresh at generation
     time); see `puzzle_quality.TacticalSharpness`'s own docstring for the
     full methodology.
+  - **The blunder-swing check now also requires the outcome to have
+    genuinely changed, not just the number** (2026-09-11, `find_blunders`)
+    — a real user report: a candidate where "you're completely winning no
+    matter what the move is," not a "unique quick forced mate." Root
+    cause: the swing/forced checks only ever verified the position got
+    *worse*, never that it stopped being *decided* — a puzzle position
+    already at mate-in-4 dropping to "merely" up a rook after the target's
+    actual move is a swing of tens of thousands of cp under `mate_score`
+    scaling (trivially past `blunder_threshold_cp`) and the mate line beats
+    any non-mating alternative by a similarly huge margin (trivially
+    "forced" — mate scores dwarf ordinary evals, so this isn't really
+    testing "is there one right answer" here at all), despite nothing
+    practical having changed. `decided_position_cp` already existed for
+    exactly this "is the outcome decided" question, just applied one-sided,
+    on purpose, to the *before* eval only (a blunder that throws away a
+    real winning position into an actual loss is exactly the dramatic case
+    this should find, and must stay accepted). The fix applies the same
+    bar to `eval_after` too: a candidate is now rejected if the position is
+    *still* at or past `decided_position_cp` afterward, regardless of how
+    large the raw swing or forced-gap number looks. Doesn't touch the
+    before-side check's intentional asymmetry at all.
   - **The rating regressor is wired into `game_import.py` (built)** —
     `find_blunders` takes an optional `rating_model` (a loaded
     `puzzle_rating_model` pipeline); when given, a candidate's `rating` is
