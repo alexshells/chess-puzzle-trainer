@@ -1308,3 +1308,25 @@ happening, not just get working code — explain non-obvious choices inline
 simpler one I'd understand. As of 2026-09-03 I'd rather you just make the
 edits directly (frontend included) than have me drive them myself — the
 explain-as-you-go part still stands, just not the "let me type it" part.
+
+**As of 2026-09-16: wipe alexshellsy's (user id 3, production) "My Games"
+state after deploying any change to the puzzle-generation/quality pipeline**
+(anything in `find_blunders`, `analyse_puzzle_quality`, the quality/rating
+models, motif tagging, tablebase gating, or their `config.py` thresholds) —
+so the next test pulls fresh puzzles under the new code instead of stale
+ones generated under the old logic. In FK-safe order, against production:
+```sql
+DELETE FROM puzzle_attempt WHERE puzzle_id IN (SELECT id FROM puzzle WHERE owner_id = 3);
+DELETE FROM puzzle_feedback WHERE puzzle_id IN (SELECT id FROM puzzle WHERE owner_id = 3);
+DELETE FROM puzzle WHERE owner_id = 3;
+DELETE FROM personal_puzzle_candidate WHERE user_id = 3;
+DELETE FROM scanned_game WHERE user_id = 3;
+DELETE FROM game_import_progress WHERE user_id = 3;
+```
+Run via `railway ssh --service backend -- php bin/console dbal:run-sql "<query>"`
+(the same MySQL connection backend and ml/ both write to, so this one
+console command reaches every table involved). A real hard DELETE, not the
+`discardedAt` soft-exclude used elsewhere — deliberate here, since the
+whole point is a clean slate for testing, not preserving this account's
+attempt history. Only ever scoped to user id 3 — never run this against a
+real user's data without being asked.
