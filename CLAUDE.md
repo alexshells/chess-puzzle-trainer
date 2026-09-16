@@ -858,6 +858,33 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
       Worth watching in practice: `/stats`'s category radar chart will now
       move for "My Games" solves whenever the tagger recognizes something,
       same as it already does for Lichess puzzles.
+  - **The before-side "is this already decided" pre-filter moved to
+    win_chances space too, and got tighter** (2026-09-14,
+    `win_chance_decided_threshold`) — a real user report on a live
+    production puzzle (#30692): the puzzle position was -557cp for the
+    solver (White), a position a human would call already lost, yet it
+    cleared the old flat `decided_position_cp` cutoff (600) since -557 is
+    "only" 557. Checked directly against the real 51k-row Lichess sample:
+    99.87% of already-published, legitimately good puzzles never start
+    that lost for the solver (`puzzle_position_eval_cp <= -557` matches
+    just 36/51,096 rows) — confirming -557 wasn't a defensible "down but
+    fighting" puzzle shape, it was the exact "solver's already-dead game
+    got deader" case this pre-filter was originally meant to catch,
+    slipping through on a numeric technicality. The original reasoning for
+    keeping this gate loose ("let `puzzle_position_eval_cp`, one of the
+    model's own features, learn the real boundary instead of a hand-picked
+    cutoff") had a real gap: a candidate rejected *at this pre-filter*
+    never reaches the quality model at all, so that argument only ever
+    applied to candidates that already passed it. Fixed the same way as
+    the swing/forced gates: `win_chances(puzzle_position_eval_cp) >
+    -win_chance_decided_threshold`, with the threshold itself tightened
+    from the flat cutoff's raw-cp equivalent to **-0.65** (≈-420cp) —
+    chosen to sit comfortably outside where 99.87% of real puzzles land,
+    while still admitting a genuine comeback-from-behind story on the
+    before side, unchanged in spirit from the original design intent.
+    Puzzle #30692 itself was discarded (`discardedAt`) directly in
+    production once confirmed bad, rather than left for the owner to
+    down-vote manually.
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random

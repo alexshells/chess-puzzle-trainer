@@ -135,7 +135,7 @@ def find_blunders(
     *,
     depth: int,
     win_chance_swing_threshold: float,
-    decided_position_cp: int,
+    win_chance_decided_threshold: float,
     forced_win_chance_gap: float,
     max_solver_moves: int,
     decisive_material_gain: int,
@@ -160,12 +160,22 @@ def find_blunders(
     swing to nearly the same value, correctly rejecting it — this one check
     replaces what used to be two separate raw-cp gates (a swing-magnitude
     threshold, plus a second "and still isn't decided afterward" check).
-    decided_position_cp remains a *separate*, deliberately loose,
-    compute-saving pre-filter on the BEFORE eval only (see config.py) — a
-    blunder that throws away a real winning position into an actual loss is
-    exactly what this should find, so that side stays one-sided on purpose;
-    it just isn't the mechanism that decides "did the outcome really
-    change" anymore. Also requires analyse_puzzle_quality's `forced` to be
+    win_chance_decided_threshold remains a *separate* pre-filter on the
+    BEFORE eval only (see config.py) — a blunder that throws away a real
+    winning position into an actual loss is exactly what this should find,
+    so that side stays one-sided on purpose; it just isn't the mechanism
+    that decides "did the outcome really change" anymore. Was a flat
+    600cp cutoff (`decided_position_cp`) until a real report (puzzle
+    #30692, 2026-09-14) showed it was too loose: the puzzle position was
+    -557cp for the solver — a position 99.87% of real, already-published
+    Lichess puzzles never start from that lost (checked directly against
+    the 51k-row sample) — yet -557 still slipped under a flat -600
+    threshold, producing a puzzle that wasn't "solver had a shot and blew
+    it," just "solver's already-dead game got a bit deader." Converted to
+    win_chances space and tightened to -0.65 (≈-420cp) accordingly — still
+    loose enough to admit a real comeback-from-behind story, just no
+    longer loose enough to admit an already-decided one. Also requires
+    analyse_puzzle_quality's `forced` to be
     True — a candidate with more than one adequate reply (win_chances gap
     under forced_win_chance_gap, e.g. several moves that all win a
     drawn-out K+R-vs-K endgame, just at different speeds, or a mate that
@@ -253,7 +263,7 @@ def find_blunders(
 
             if (
                 analysis is not None
-                and analysis.puzzle_position_eval_cp > -decided_position_cp
+                and win_chances(analysis.puzzle_position_eval_cp) > -win_chance_decided_threshold
                 and analysis.solving_pv
             ):
                 board_after = board.copy()
@@ -561,7 +571,7 @@ def _process_one_game(
         engine,
         depth=settings.stockfish_depth,
         win_chance_swing_threshold=settings.win_chance_swing_threshold,
-        decided_position_cp=settings.decided_position_cp,
+        win_chance_decided_threshold=settings.win_chance_decided_threshold,
         forced_win_chance_gap=settings.forced_win_chance_gap,
         max_solver_moves=settings.max_solver_moves,
         decisive_material_gain=settings.decisive_material_gain,

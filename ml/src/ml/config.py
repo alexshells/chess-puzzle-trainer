@@ -39,17 +39,27 @@ class Settings(BaseSettings):
     # win-probability change, so it's correctly rejected by this one
     # condition without needing the second gate at all.
     win_chance_swing_threshold: float = 0.6
-    # Skip blunders piled onto an *extremely* decided position (a real mate
-    # sequence already on the board, say) — purely a compute-saving sanity
-    # check now, not the actual "was this practically already lost" quality
-    # judgment. That nuance (a position at -400, say, being essentially
-    # hopeless for a human even though it's not literally decided) used to
-    # need a hand-picked cp cutoff here; now it's puzzle_position_eval_cp,
-    # one of the model's own features (see puzzle_features.py), so the
-    # model learns its own boundary from real Lichess-scale data instead of
-    # a guessed number. Kept loose on purpose — this only exists to avoid
-    # wasting a Stockfish "after" call on a position that's obviously over.
-    decided_position_cp: int = 600
+    # Skip blunders piled onto an already-decided position, in win
+    # probability space (win_chances(puzzle_position_eval_cp), not raw cp) —
+    # a blunder that throws away a real winning position into an actual
+    # loss is exactly what this should still find, so this stays one-sided
+    # (only the BEFORE eval is checked here; see win_chance_swing_threshold
+    # above for the AFTER side). Was a flat 600cp cutoff
+    # (`decided_position_cp`) — reasoned at the time as "purely a
+    # compute-saving sanity check, not the real quality judgment; let
+    # puzzle_position_eval_cp, one of the model's own features, learn the
+    # real boundary instead" — but that reasoning had a real gap: a
+    # candidate rejected *here* never reaches the quality model at all, so
+    # "let the model learn it" only ever applied to candidates that already
+    # passed this gate. A real report (puzzle #30692, 2026-09-14) exposed
+    # it: puzzle_position_eval_cp was -557 (99.87% of real, already-
+    # published Lichess puzzles never start that lost for the solver —
+    # checked directly against the 51k-row sample), yet -557 still cleared
+    # a flat -600cp bar. Converted to win_chances space and tightened
+    # accordingly: -0.65 corresponds to roughly -420cp, comfortably outside
+    # where 99.87% of real puzzles sit, while still admitting a genuine
+    # down-but-not-out comeback story.
+    win_chance_decided_threshold: float = 0.65
     # How much the best move at the puzzle position must beat the
     # second-best by, in win-probability space (win_chances gap, not raw
     # cp), to count as a "forced" — i.e. genuinely unique — refutation, not

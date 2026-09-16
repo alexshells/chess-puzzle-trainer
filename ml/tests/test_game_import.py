@@ -169,7 +169,7 @@ def _find_fork_blunders(engine: FakeEngine, **overrides):
         engine=engine,
         depth=1,
         win_chance_swing_threshold=0.6,
-        decided_position_cp=600,
+        win_chance_decided_threshold=0.65,
         forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
@@ -272,7 +272,7 @@ def test_rejects_a_candidate_when_a_second_move_wins_almost_as_well():
         engine=engine,
         depth=1,
         win_chance_swing_threshold=0.6,
-        decided_position_cp=600,
+        win_chance_decided_threshold=0.65,
         forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
@@ -411,7 +411,7 @@ def test_solution_ends_the_moment_checkmate_is_delivered():
         engine=engine,
         depth=1,
         win_chance_swing_threshold=0.6,
-        decided_position_cp=600,
+        win_chance_decided_threshold=0.65,
         forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
@@ -452,7 +452,7 @@ def test_skips_blunders_in_an_already_lost_position():
         engine=engine,
         depth=1,
         win_chance_swing_threshold=0.6,
-        decided_position_cp=600,
+        win_chance_decided_threshold=0.65,
         forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
@@ -461,6 +461,30 @@ def test_skips_blunders_in_an_already_lost_position():
     )
 
     assert candidates == []
+
+
+def test_rejects_a_candidate_from_a_deeply_lost_puzzle_position():
+    # Real-report regression (puzzle #30692, 2026-09-14): a puzzle position
+    # of -550cp for the solver would have cleared the old flat 600cp
+    # pre-filter (-550 > -600) despite being a position 99.87% of real,
+    # already-published Lichess puzzles never start that lost from (checked
+    # directly against the 51k-row sample) — the puzzle wasn't "solver had
+    # a shot and blew it," just "solver's already-dead game got deader."
+    # win_chances(-550) is well past win_chance_decided_threshold (-0.65),
+    # so this is now rejected at the pre-filter, before an "after" call is
+    # even made — only 2 of the 3 scripted responses get consumed.
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),  # pre-setup eval (unused)
+            [(-550, [_FORK_MOVE]), (-600, [_PV_MOVE])],  # puzzle position — deeply lost
+            (-900, [_PV_MOVE]),  # never consumed — guard fails before this would be called
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
+
+    assert candidates == []
+    assert engine.calls == 2
 
 
 def test_uses_the_rating_model_when_given_instead_of_player_rating():
@@ -555,7 +579,7 @@ def test_ignores_games_the_target_did_not_play_in():
         engine=engine,
         depth=1,
         win_chance_swing_threshold=0.6,
-        decided_position_cp=600,
+        win_chance_decided_threshold=0.65,
         forced_win_chance_gap=FORCED_WIN_CHANCE_GAP,
         max_solver_moves=MAX_SOLVER_MOVES,
         decisive_material_gain=DECISIVE_MATERIAL_GAIN,
