@@ -33,7 +33,7 @@ function selectMode(mode: (typeof MODES)[number]['value']) {
         </div>
         <RouterLink to="/stats">Stats</RouterLink>
         <RouterLink to="/friends">Friends</RouterLink>
-        <RouterLink to="/my-games">My Games</RouterLink>
+        <RouterLink to="/my-games">Chess.com Games</RouterLink>
       </nav>
     </div>
 

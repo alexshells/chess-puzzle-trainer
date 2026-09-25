@@ -78,7 +78,7 @@ watch(session, load, { immediate: true })
               :class="{ active: historySource === 'personal' }"
               @click="historySource = 'personal'"
             >
-              My Games
+              Chess.com Games
             </button>
           </div>
         </div>
@@ -91,7 +91,7 @@ watch(session, load, { immediate: true })
         <AttemptHistoryTable
           v-else
           :attempts="personalAttempts"
-          empty-message="No My Games attempts recorded yet — import your chess.com games to get started."
+          empty-message="No Chess.com Games attempts recorded yet — import your chess.com games to get started."
         />
       </section>
     </template>
