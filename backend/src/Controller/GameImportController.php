@@ -76,6 +76,11 @@ class GameImportController
             'fen' => $puzzle->getFen(),
             'solution' => $puzzle->getSolution(),
             'rating' => $puzzle->getRating(),
+            // Lets the solving page link straight back to the source game,
+            // same field /stats already shows via AttemptRecord::gameUrl —
+            // this is the first time it's served on the *solving* endpoint
+            // rather than just the attempt-history one.
+            'gameUrl' => $puzzle->getGameUrl(),
         ]);
     }
 

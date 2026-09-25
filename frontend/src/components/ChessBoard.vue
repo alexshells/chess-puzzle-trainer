@@ -14,6 +14,10 @@ export interface Puzzle {
   fen: string
   solution: string[] // UCI moves, e.g. 'e7e5' or 'e7e8q'; index 0 is the opponent's auto-played setup move
   rating?: number // absent for the hand-built offline fallback puzzles, which aren't Lichess-rated
+  // Only ever set for a "My Games" puzzle (and only if imported after
+  // Puzzle::$gameUrl existed on the backend) — the chess.com game this
+  // puzzle came from. Absent/null for every Lichess/offline-fallback puzzle.
+  gameUrl?: string | null
 }
 
 type Mode = 'setup' | 'solving' | 'mistake' | 'solved' | 'given-up'

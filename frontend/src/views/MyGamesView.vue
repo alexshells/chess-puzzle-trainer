@@ -204,6 +204,9 @@ onUnmounted(() => {
 
         <template v-if="status && status.puzzlesFound > 0">
           <p class="counter">{{ solvedCount }} puzzles solved this session</p>
+          <p v-if="currentPuzzle?.gameUrl" class="counter">
+            <a class="link" :href="currentPuzzle.gameUrl" target="_blank" rel="noopener">View this game on chess.com</a>
+          </p>
           <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" @gave-up="handleGaveUp" />
 
           <p v-if="ratingChange !== null" class="rating-change">
@@ -234,6 +237,7 @@ onUnmounted(() => {
 <style scoped>
 .my-games { display: flex; flex-direction: column; align-items: center; }
 .counter { color: #cfc6b3; font-size: 0.9rem; margin: 0 0 0.5rem; }
+.counter .link { margin-left: 0; } /* .link's margin-left assumes it trails inline text; this one stands alone */
 .counter.error { color: #d98c8c; }
 .import-form { display: flex; gap: 0.5rem; }
 .import-form input {
