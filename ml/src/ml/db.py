@@ -170,6 +170,13 @@ class PersonalPuzzleCandidate(Base):
     # JSON-encoded array of UCI moves, same shape/convention as Puzzle.solution.
     solution = Column(Text, nullable=False)
     rating = Column(Integer, nullable=False)
+    # An 80% empirical interval around `rating` (puzzle_rating_model.py's
+    # predict_interval/INTERVAL_LOW_OFFSET/INTERVAL_HIGH_OFFSET) — both null
+    # when rating fell back to the player's own chess.com rating (no model,
+    # no comparable uncertainty estimate) or for candidates found before
+    # these columns existed.
+    rating_low = Column(Integer, nullable=True)
+    rating_high = Column(Integer, nullable=True)
     # e.g. "chesscom:{game_id}:{ply}" — backend's dedup key. Also the join key
     # a future puzzle-quality model uses to line these features up with the
     # thumbs up/down label sitting in backend's puzzle_feedback table (see

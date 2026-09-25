@@ -105,6 +105,9 @@ export interface AttemptRecord {
   id: number
   puzzleId: number
   puzzleRating: number
+  /** An 80% empirical interval around puzzleRating — both null for the shared Lichess pool and for personal puzzles predicted without a model. */
+  puzzleRatingLow: number | null
+  puzzleRatingHigh: number | null
   success: boolean
   timeSpentSeconds: number
   createdAt: string

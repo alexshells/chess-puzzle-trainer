@@ -14,6 +14,15 @@ export interface Puzzle {
   fen: string
   solution: string[] // UCI moves, e.g. 'e7e5' or 'e7e8q'; index 0 is the opponent's auto-played setup move
   rating?: number // absent for the hand-built offline fallback puzzles, which aren't Lichess-rated
+  // An 80% empirical interval around `rating` — only ever set for a "My
+  // Games" puzzle whose rating came from ml/'s trained model (never for a
+  // Lichess puzzle's real crowd-converged rating, which has no comparable
+  // model uncertainty to report, and null when that model fell back to the
+  // player's own chess.com rating). Shown as a range instead of a bare
+  // number so a wildly-off single prediction reads as "imprecise," not
+  // "broken" — see CLAUDE.md's Phase 2.5 note.
+  ratingLow?: number | null
+  ratingHigh?: number | null
   // Only ever set for a "My Games" puzzle (and only if imported after
   // Puzzle::$gameUrl existed on the backend) — the chess.com game this
   // puzzle came from. Absent/null for every Lichess/offline-fallback puzzle.
@@ -256,7 +265,12 @@ function viewLive() {
 <template>
   <div class="board-wrap">
     <p class="status">{{ statusText }}</p>
-    <p v-if="puzzle?.rating" class="rating">Puzzle rating: {{ puzzle.rating }}</p>
+    <p v-if="puzzle?.rating" class="rating">
+      <template v-if="puzzle.ratingLow != null && puzzle.ratingHigh != null">
+        Puzzle rating: ~{{ puzzle.rating }} <span class="rating-range">(likely {{ puzzle.ratingLow }}–{{ puzzle.ratingHigh }})</span>
+      </template>
+      <template v-else>Puzzle rating: {{ puzzle.rating }}</template>
+    </p>
     <TheChessboard
       :board-config="boardConfig"
       @board-created="handleBoardCreated"
@@ -329,6 +343,7 @@ function viewLive() {
 }
 .status { font-size: 0.95rem; color: #cfc6b3; min-height: 1.2em; }
 .rating { font-size: 0.85rem; color: #b8985a; margin: -0.4rem 0 0; }
+.rating-range { color: #cfc6b3; }
 .mistake-controls { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
 .mistake-text { color: #cfc6b3; font-size: 0.9rem; margin: 0; }
 .review-controls { display: flex; gap: 0.4rem; }

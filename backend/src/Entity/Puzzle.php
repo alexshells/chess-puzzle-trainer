@@ -27,6 +27,22 @@ class Puzzle
     #[ORM\Column]
     private int $rating;
 
+    /**
+     * An 80% empirical interval around `rating` (ml/'s puzzle_rating_model.py,
+     * predict_interval) — shown alongside the rating on the solving page so
+     * a "My Games" puzzle's model-predicted difficulty reads as an honest
+     * estimate rather than a precise fact. Both null for the shared Lichess
+     * pool (a real crowd-converged rating has no comparable model
+     * uncertainty to report) and for personal puzzles whose rating fell
+     * back to the player's own chess.com rating (no trained model
+     * available at generation time).
+     */
+    #[ORM\Column(nullable: true)]
+    private ?int $ratingLow = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?int $ratingHigh = null;
+
     /** @var string[]|null Lichess theme tags, e.g. ["fork", "middlegame"]. */
     #[ORM\Column(nullable: true)]
     private ?array $themes = null;
@@ -147,6 +163,30 @@ class Puzzle
     public function setRating(int $rating): static
     {
         $this->rating = $rating;
+
+        return $this;
+    }
+
+    public function getRatingLow(): ?int
+    {
+        return $this->ratingLow;
+    }
+
+    public function setRatingLow(?int $ratingLow): static
+    {
+        $this->ratingLow = $ratingLow;
+
+        return $this;
+    }
+
+    public function getRatingHigh(): ?int
+    {
+        return $this->ratingHigh;
+    }
+
+    public function setRatingHigh(?int $ratingHigh): static
+    {
+        $this->ratingHigh = $ratingHigh;
 
         return $this;
     }

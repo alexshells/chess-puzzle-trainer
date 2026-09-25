@@ -885,6 +885,46 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
     Puzzle #30692 itself was discarded (`discardedAt`) directly in
     production once confirmed bad, rather than left for the owner to
     down-vote manually.
+  - **A "My Games" puzzle's rating is now shown as a range, not a bare
+    number** (2026-09-25, `puzzle_rating_model.predict_interval`,
+    `INTERVAL_LOW_OFFSET`/`INTERVAL_HIGH_OFFSET`) — a real user reaction
+    ("the rating system isn't working at all") turned out to be about
+    difficulty *estimation*, not the Glicko-2 player-rating system (which
+    a quick real-data check confirmed is genuinely working — a real
+    account's rating and RD had both moved substantially from the
+    defaults). The rating model's honest MAE (~318) means a single number
+    reads as far more precise than it is, and a puzzle that plays much
+    harder or easier than its shown rating reasonably looks broken rather
+    than merely imprecise. Fix: extended `puzzle_rating_model.py`'s
+    `train()` to also report the 10th/90th percentile of signed residuals
+    (actual − predicted) on the real held-out test set — a genuine
+    empirical interval, not a guessed or symmetric band. Measured at
+    51,096 examples: **-499 / +525**, rounded to `INTERVAL_LOW_OFFSET=-500`,
+    `INTERVAL_HIGH_OFFSET=525`. `predict_interval()` sits alongside the
+    existing `predict()` (which stays unchanged, so existing callers/tests
+    are untouched) and returns `(rating, low, high)`, each bound clamped to
+    `[MIN_RATING, MAX_RATING]` independently — a rating near either edge
+    can clamp one bound without clamping the other.
+    - Threaded through the full stack: `BlunderCandidate.rating_low/high`
+      (both `None` when there's no trained rating model, matching how
+      `rating` itself falls back to the player's own chess.com rating in
+      that case — no model means no comparable uncertainty estimate) →
+      new `PersonalPuzzleCandidate.rating_low/high` columns (migration
+      `c2bece89cd42`) → `GameImportCandidateOut.ratingLow/High` →
+      `Puzzle::$ratingLow/$ratingHigh` (backend, added via
+      `doctrine:schema:update --force` rather than a committed migration —
+      see the "committed migrations are SQLite-only" note under
+      Deployment; this project's actual practice for a backend schema
+      change has consistently been schema:update against both local dev
+      and production, `themes`/`gameUrl` included, despite no migration
+      file existing for either) → both the "My Games" solving page
+      (`ChessBoard.vue`, shown as "~1450 (likely 950–1975)") and `/stats`'
+      history table (compact "(950–1975)" suffix, via
+      `PuzzleAttemptController::serializeAttempt()` →
+      `AttemptRecord.puzzleRatingLow/High`). Deliberately never shown for
+      a Lichess puzzle — its rating is a real crowd-converged value with
+      no comparable model uncertainty to report, and both fields are
+      simply `null` for those rows.
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random

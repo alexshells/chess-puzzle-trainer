@@ -29,7 +29,12 @@ function formatTime(createdAt: string): string {
           <a v-if="attempt.gameUrl" :href="attempt.gameUrl" target="_blank" rel="noopener">#{{ attempt.puzzleId }}</a>
           <template v-else>#{{ attempt.puzzleId }}</template>
         </td>
-        <td>{{ attempt.puzzleRating }}</td>
+        <td>
+          {{ attempt.puzzleRating }}
+          <span v-if="attempt.puzzleRatingLow != null && attempt.puzzleRatingHigh != null" class="rating-range">
+            ({{ attempt.puzzleRatingLow }}–{{ attempt.puzzleRatingHigh }})
+          </span>
+        </td>
         <td :class="attempt.success ? 'success' : 'failure'">
           {{ attempt.success ? 'Solved' : 'Missed' }}
         </td>
@@ -58,4 +63,5 @@ td.success { color: #9dc98a; }
 td.failure { color: #d98c8c; }
 td a { color: #b8985a; text-decoration: underline; }
 td a:hover { color: #ede6d6; }
+.rating-range { color: #6f6656; font-size: 0.8em; }
 </style>

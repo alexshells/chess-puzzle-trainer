@@ -76,6 +76,12 @@ class GameImportController
             'fen' => $puzzle->getFen(),
             'solution' => $puzzle->getSolution(),
             'rating' => $puzzle->getRating(),
+            // An 80% empirical interval around `rating` (ml/'s
+            // puzzle_rating_model.py) — both null when the model wasn't
+            // available at generation time. Lets the solving page show the
+            // predicted rating as a range instead of a bare number.
+            'ratingLow' => $puzzle->getRatingLow(),
+            'ratingHigh' => $puzzle->getRatingHigh(),
             // Lets the solving page link straight back to the source game,
             // same field /stats already shows via AttemptRecord::gameUrl —
             // this is the first time it's served on the *solving* endpoint
@@ -88,7 +94,7 @@ class GameImportController
      * @param array<int, array{
      *     fen: string, solution: string[], rating: int, externalId: string,
      *     forced: bool, setupSwingCp: int, qualityScore: ?float, gameUrl: ?string,
-     *     themes?: string[],
+     *     themes?: string[], ratingLow?: ?int, ratingHigh?: ?int,
      * }> $candidates
      */
     private function persistNewCandidates(User $user, array $candidates): void
@@ -103,6 +109,8 @@ class GameImportController
             $puzzle->setFen($candidate['fen']);
             $puzzle->setSolution($candidate['solution']);
             $puzzle->setRating($candidate['rating']);
+            $puzzle->setRatingLow($candidate['ratingLow'] ?? null);
+            $puzzle->setRatingHigh($candidate['ratingHigh'] ?? null);
             $puzzle->setExternalId($candidate['externalId']);
             $puzzle->setGameUrl($candidate['gameUrl'] ?? null);
             $puzzle->setOwner($user);

@@ -64,6 +64,20 @@ _DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "models" /
 MIN_RATING = 400
 MAX_RATING = 3000
 
+# An 80% empirical interval — the 10th/90th percentile of signed residuals
+# (actual − predicted) on a real held-out test set, not a guessed or
+# symmetric band. Measured 2026-09-25 at 51,096 examples (see train()'s
+# residual_p10/residual_p90, and CLAUDE.md's Phase 2.5 note): -499 / +525,
+# rounded here to -500/+525. Exists so a "My Games" puzzle's predicted
+# rating can be shown as a range rather than a bare number — the model's
+# real MAE (~318) means a single number reads as more precise than it is,
+# and a user who solves a "1450" puzzle that plays like 1800 reasonably
+# concludes the system is broken rather than merely imprecise. This won't
+# shrink until the model itself gets more accurate; it's an honest report
+# of current uncertainty, not a UI trick.
+INTERVAL_LOW_OFFSET = -500
+INTERVAL_HIGH_OFFSET = 525
+
 
 def build_feature_matrix(examples: list[PuzzleQualityTrainingExample]) -> np.ndarray:
     return build_core_feature_matrix(examples)
@@ -86,6 +100,16 @@ def train(X: np.ndarray, ratings: np.ndarray, *, test_size: float, seed: int) ->
     # has neither .coef_ nor .feature_importances_.
     importance = permutation_importance(pipeline, X_test, y_test, n_repeats=10, random_state=seed, scoring="r2")
 
+    # Signed residuals (actual - predicted) on the held-out test set — the
+    # empirical basis for the interval shown alongside a My Games puzzle's
+    # predicted rating (see MIN_RATING/MAX_RATING's siblings,
+    # INTERVAL_LOW_OFFSET/INTERVAL_HIGH_OFFSET below, and predict_interval()).
+    # 10th/90th percentile rather than the mean absolute error alone: MAE
+    # says "how big is a typical miss," this says "80% of the time, the
+    # real rating actually fell in this exact range" — a genuine empirical
+    # interval, not a rough symmetric band, and it can (and does) come out
+    # asymmetric.
+    residuals = y_test - y_pred
     report = {
         "n_train": len(X_train),
         "n_test": len(X_test),
@@ -93,6 +117,8 @@ def train(X: np.ndarray, ratings: np.ndarray, *, test_size: float, seed: int) ->
         "mae": mean_absolute_error(y_test, y_pred),
         "rmse": root_mean_squared_error(y_test, y_pred),
         "r2": r2_score(y_test, y_pred),
+        "residual_p10": float(np.percentile(residuals, 10)),
+        "residual_p90": float(np.percentile(residuals, 90)),
         "permutation_importance": dict(zip(FEATURE_NAMES, importance.importances_mean.tolist())),
     }
     return pipeline, report
@@ -120,6 +146,20 @@ def predict(model: Pipeline, analysis: PuzzleQualityAnalysis) -> float:
     return max(MIN_RATING, min(MAX_RATING, raw))
 
 
+def predict_interval(model: Pipeline, analysis: PuzzleQualityAnalysis) -> tuple[int, int, int]:
+    """
+    (rating, low, high) — the same point prediction as predict(), plus an
+    80% empirical interval (INTERVAL_LOW_OFFSET/INTERVAL_HIGH_OFFSET) around
+    it, each independently clamped to [MIN_RATING, MAX_RATING]. A separate
+    function from predict() rather than changing its return shape, so
+    existing callers/tests that only want the point estimate are untouched.
+    """
+    rating = predict(model, analysis)
+    low = max(MIN_RATING, min(MAX_RATING, rating + INTERVAL_LOW_OFFSET))
+    high = max(MIN_RATING, min(MAX_RATING, rating + INTERVAL_HIGH_OFFSET))
+    return round(rating), round(low), round(high)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -140,6 +180,11 @@ def main() -> None:
 
     logger.info("n_train=%d n_test=%d mean_rating=%.0f", report["n_train"], report["n_test"], report["mean_rating"])
     logger.info("MAE: %.1f  RMSE: %.1f  R^2: %.3f", report["mae"], report["rmse"], report["r2"])
+    logger.info(
+        "80%% empirical interval (10th/90th percentile of signed residuals): %+.0f / %+.0f",
+        report["residual_p10"],
+        report["residual_p90"],
+    )
     logger.info("Permutation importance (mean R^2 drop when shuffled): %s", report["permutation_importance"])
 
     args.model_path.parent.mkdir(parents=True, exist_ok=True)

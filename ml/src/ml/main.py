@@ -142,6 +142,8 @@ def get_game_import_status(user_id: int) -> GameImportStatusResponse:
                 fen=c.fen,
                 solution=json.loads(c.solution),
                 rating=c.rating,
+                ratingLow=c.rating_low,
+                ratingHigh=c.rating_high,
                 externalId=c.external_id,
                 gameUrl=c.game_url,
                 forced=bool(c.forced),

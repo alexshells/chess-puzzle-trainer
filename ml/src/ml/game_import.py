@@ -50,7 +50,7 @@ from ml.puzzle_motifs import tag_puzzle
 from ml.puzzle_quality import analyse_puzzle_quality, find_decisive_payoff, total_material, win_chances
 from ml.puzzle_quality_model import predict as predict_quality
 from ml.puzzle_quality_model import try_load as try_load_quality_model
-from ml.puzzle_rating_model import predict as predict_rating
+from ml.puzzle_rating_model import predict_interval as predict_rating_interval
 from ml.puzzle_rating_model import try_load as try_load_rating_model
 from ml.tablebase import TablebaseVerdict
 
@@ -69,6 +69,11 @@ class BlunderCandidate:
     solution: list[str]
     external_id: str
     rating: int
+    # An 80% empirical interval around `rating` (puzzle_rating_model.py's
+    # predict_interval) — None/None when rating fell back to the player's
+    # own chess.com rating (no model, no comparable uncertainty estimate).
+    rating_low: int | None
+    rating_high: int | None
     # chess.com's own game view URL, with a ?move={ply} deep link to this
     # puzzle's exact starting position — lets /stats link a "My Games"
     # puzzle straight to the moment it happened, not just the game. Not the
@@ -317,11 +322,20 @@ def find_blunders(
                     # config.py's endgame_material_threshold.
                     is_endgame = total_material(board) <= endgame_material_threshold
 
-                    rating = (
-                        round(predict_rating(rating_model, analysis))
-                        if rating_model is not None
-                        else player_rating
-                    )
+                    # rating_low/rating_high: an 80% empirical interval
+                    # around the prediction (puzzle_rating_model.py's
+                    # INTERVAL_LOW_OFFSET/INTERVAL_HIGH_OFFSET, measured
+                    # from real held-out residuals) — shown alongside the
+                    # rating on the solving page so a wildly-off single
+                    # prediction reads as "the system said this was
+                    # imprecise" rather than "the system is broken." None
+                    # for both when there's no trained model (the
+                    # player's-own-rating fallback has no comparable
+                    # uncertainty estimate to report).
+                    if rating_model is not None:
+                        rating, rating_low, rating_high = predict_rating_interval(rating_model, analysis)
+                    else:
+                        rating, rating_low, rating_high = player_rating, None, None
                     quality_score = (
                         predict_quality(quality_model, analysis, rating) if quality_model is not None else None
                     )
@@ -358,6 +372,8 @@ def find_blunders(
                                 solution=solution,
                                 external_id=f"chesscom:{game_id}:{ply}",
                                 rating=rating,
+                                rating_low=rating_low,
+                                rating_high=rating_high,
                                 # chess.com's live game viewer supports a
                                 # ?move={ply} deep link (verified live against a
                                 # real game — 0 = starting position, N = the
@@ -607,6 +623,8 @@ def _process_one_game(
                 fen=candidate.fen,
                 solution=json.dumps(candidate.solution),
                 rating=candidate.rating,
+                rating_low=candidate.rating_low,
+                rating_high=candidate.rating_high,
                 external_id=candidate.external_id,
                 game_url=candidate.game_url,
                 forced=candidate.forced,

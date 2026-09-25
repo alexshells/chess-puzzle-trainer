@@ -3,7 +3,18 @@ from pathlib import Path
 import numpy as np
 
 from ml.puzzle_quality import PuzzleQualityAnalysis
-from ml.puzzle_rating_model import MAX_RATING, MIN_RATING, build_feature_matrix, extract_ratings, predict, train, try_load
+from ml.puzzle_rating_model import (
+    INTERVAL_HIGH_OFFSET,
+    INTERVAL_LOW_OFFSET,
+    MAX_RATING,
+    MIN_RATING,
+    build_feature_matrix,
+    extract_ratings,
+    predict,
+    predict_interval,
+    train,
+    try_load,
+)
 
 
 class FakeExample:
@@ -138,6 +149,48 @@ def test_predict_clamps_an_out_of_range_prediction():
     assert predict(FakeModel(100_000), analysis) == MAX_RATING
     assert predict(FakeModel(-100_000), analysis) == MIN_RATING
     assert predict(FakeModel(1800), analysis) == 1800  # a plausible value passes through unchanged
+
+
+def test_predict_interval_returns_rating_with_offset_bounds():
+    class FakeModel:
+        def predict(self, X):
+            return np.array([1500.0])
+
+    analysis = PuzzleQualityAnalysis(
+        puzzle_position_eval_cp=0, setup_swing_cp=0, forced=True, refutation_gap_cp=200, solving_pv=[]
+    )
+
+    rating, low, high = predict_interval(FakeModel(), analysis)
+
+    assert rating == 1500
+    assert low == 1500 + INTERVAL_LOW_OFFSET
+    assert high == 1500 + INTERVAL_HIGH_OFFSET
+
+
+def test_predict_interval_clamps_each_bound_independently():
+    # A rating near MIN_RATING pushes its low bound below the floor while
+    # its high bound stays comfortably in range, and vice versa near
+    # MAX_RATING — each bound must clamp on its own, not move together.
+    class FakeModel:
+        def __init__(self, raw_prediction):
+            self._raw = raw_prediction
+
+        def predict(self, X):
+            return np.array([self._raw])
+
+    analysis = PuzzleQualityAnalysis(
+        puzzle_position_eval_cp=0, setup_swing_cp=0, forced=True, refutation_gap_cp=200, solving_pv=[]
+    )
+
+    rating, low, high = predict_interval(FakeModel(450), analysis)
+    assert rating == 450
+    assert low == MIN_RATING  # 450 + INTERVAL_LOW_OFFSET (-500) would be negative
+    assert high == 450 + INTERVAL_HIGH_OFFSET
+
+    rating, low, high = predict_interval(FakeModel(2900), analysis)
+    assert rating == 2900
+    assert low == 2900 + INTERVAL_LOW_OFFSET
+    assert high == MAX_RATING  # 2900 + INTERVAL_HIGH_OFFSET (525) would exceed it
 
 
 def test_try_load_returns_none_when_no_model_file_exists(tmp_path: Path):

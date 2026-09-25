@@ -23,6 +23,11 @@ class GameImportCandidateOut(BaseModel):
     fen: str
     solution: list[str]
     rating: int
+    # An 80% empirical interval around `rating` (puzzle_rating_model.py's
+    # predict_interval) — both None when rating fell back to the player's
+    # own chess.com rating (no model, no comparable uncertainty estimate).
+    ratingLow: int | None = None
+    ratingHigh: int | None = None
     externalId: str
     # chess.com's own game view URL, relayed onto backend's Puzzle so
     # /stats can link a "My Games" row back to the actual game. None for

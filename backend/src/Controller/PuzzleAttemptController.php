@@ -130,6 +130,11 @@ class PuzzleAttemptController
             'id' => $attempt->getId(),
             'puzzleId' => $attempt->getPuzzle()->getId(),
             'puzzleRating' => $attempt->getPuzzle()->getRating(),
+            // An 80% empirical interval around puzzleRating — see
+            // Puzzle::$ratingLow's doc. Both null for the shared Lichess
+            // pool and for personal puzzles predicted without a model.
+            'puzzleRatingLow' => $attempt->getPuzzle()->getRatingLow(),
+            'puzzleRatingHigh' => $attempt->getPuzzle()->getRatingHigh(),
             'success' => $attempt->isSuccess(),
             'timeSpentSeconds' => $attempt->getTimeSpentSeconds(),
             'createdAt' => $attempt->getCreatedAt()->format(DATE_ATOM),

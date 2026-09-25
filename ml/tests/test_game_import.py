@@ -25,6 +25,7 @@ import chess
 import numpy as np
 
 from ml.game_import import _select_games_to_process, find_blunders
+from ml.puzzle_rating_model import INTERVAL_HIGH_OFFSET, INTERVAL_LOW_OFFSET
 from ml.tablebase import TablebaseVerdict
 
 TARGET = "player_one"
@@ -501,6 +502,27 @@ def test_uses_the_rating_model_when_given_instead_of_player_rating():
     assert len(candidates) == 1
     # Rounded model output, not player_rating (1200) — the model was provided.
     assert candidates[0].rating == 1838
+    # From puzzle_rating_model's INTERVAL_LOW_OFFSET/INTERVAL_HIGH_OFFSET,
+    # applied around the rounded rating.
+    assert candidates[0].rating_low == 1838 + INTERVAL_LOW_OFFSET
+    assert candidates[0].rating_high == 1838 + INTERVAL_HIGH_OFFSET
+
+
+def test_rating_interval_is_none_without_a_rating_model():
+    engine = FakeEngine(
+        [
+            (200, [_PV_MOVE]),
+            [(15, _FORK_PV), (-200, [_PV_MOVE])],
+            (-400, [_PV_MOVE]),
+        ]
+    )
+
+    candidates = _find_fork_blunders(engine)
+
+    assert len(candidates) == 1
+    assert candidates[0].rating == 1200  # player_rating fallback
+    assert candidates[0].rating_low is None
+    assert candidates[0].rating_high is None
 
 
 def test_computes_quality_score_when_a_quality_model_is_given():
