@@ -9,7 +9,6 @@ import { puzzleMode } from '../puzzleMode'
 const currentPuzzle = ref<Puzzle | null>(null)
 const solved = ref(false)
 const gaveUp = ref(false)
-const solvedCount = ref(0)
 const usingFallback = ref(false)
 let fallbackIndex = 0
 
@@ -65,7 +64,6 @@ function maybeRecordAttempt(success: boolean) {
 
 function handleSolved() {
   solved.value = true
-  solvedCount.value++
   maybeRecordAttempt(true)
 }
 
@@ -91,7 +89,6 @@ function deltaClass(n: number): string {
 </script>
 
 <template>
-  <p class="counter">{{ solvedCount }} puzzles solved this session</p>
   <p v-if="usingFallback" class="counter">Backend unreachable — showing an offline seed puzzle</p>
   <ChessBoard :puzzle="currentPuzzle" @solved="handleSolved" @mistake="handleMistake" @gave-up="handleGaveUp" />
 

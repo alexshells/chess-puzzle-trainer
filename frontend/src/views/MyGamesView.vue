@@ -26,7 +26,6 @@ const starting = ref(false)
 const currentPuzzle = ref<Puzzle | null>(null)
 const solved = ref(false)
 const gaveUp = ref(false)
-const solvedCount = ref(0)
 const ratingChange = ref<number | null>(null)
 // 1-5 stars last given for the current puzzle, or null before rating it —
 // feedback is upsert-able, so clicking a different star just overwrites the
@@ -130,7 +129,6 @@ function maybeRecordAttempt(success: boolean) {
 
 function handleSolved() {
   solved.value = true
-  solvedCount.value++
   maybeRecordAttempt(true)
 }
 
@@ -203,7 +201,6 @@ onUnmounted(() => {
         </div>
 
         <template v-if="status && status.puzzlesFound > 0">
-          <p class="counter">{{ solvedCount }} puzzles solved this session</p>
           <p v-if="currentPuzzle?.gameUrl" class="counter">
             <a class="link" :href="currentPuzzle.gameUrl" target="_blank" rel="noopener">View this game on chess.com</a>
           </p>
