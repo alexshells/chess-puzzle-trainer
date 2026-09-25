@@ -1083,6 +1083,26 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
   (whose blunders this pulls from, whether it reuses `find_blunders` or
   needs its own detection pass, how it's surfaced in the UI as a distinct
   mode) — revisit when picking up new My Games work.
+- **Idea, shelved for later (2026-09-25)**: a real *validity* filter model,
+  trained on actual negative examples instead of `puzzle_quality_model`'s
+  current popularity-only signal. The 51k-row Lichess training set is
+  100% already-curated puzzles — it contains zero invalid examples (not
+  forced, still-decided, no real payoff), so `quality_score` can only ever
+  rank *among* valid candidates, never learn to reject an invalid one;
+  that's entirely find_blunders' hard gates' job today, discovered and
+  hand-tuned one real bug report at a time (#43, #45, #30692). A genuine
+  filter would need real negatives — candidate-shaped positions from
+  uncurated games (the same kind of sample already built once for
+  `tactical_sharpness`'s feature discovery) — paired with the 51k curated
+  puzzles as the positive class, so the model actually learns what
+  "invalid" looks like. `forced`/decisive-payoff would likely stay hard
+  logical gates regardless ("exactly one right answer" is closer to
+  true/false than a preference); the soft judgment calls
+  (`win_chance_decided_threshold` and friends) are what this would
+  actually replace. Deliberately not built yet — see
+  `puzzle_quality_model.py`'s module docstring for the code-level version
+  of this note. Revisit if the hand-tuned-threshold-per-bug-report pattern
+  keeps recurring.
 
 ## Why Symfony (not Spring Boot)
 

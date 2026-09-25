@@ -325,11 +325,18 @@ def find_blunders(
                     quality_score = (
                         predict_quality(quality_model, analysis, rating) if quality_model is not None else None
                     )
-                    # The real "is this a good puzzle" judgment, learned
-                    # from real Lichess-scale data, once a trained model is
-                    # available — replaces what used to be a hand-picked
-                    # material-amount cutoff alone. Without a model, payoff
-                    # having been reached at all is still required (below).
+                    # A soft popularity-ranking gate among candidates that
+                    # already passed every *validity* gate above (forced,
+                    # win_chance_swing_threshold, decisive payoff) — not
+                    # itself a validity filter. quality_model has only ever
+                    # seen already-curated Lichess puzzles, so it can only
+                    # learn "among valid candidates, which is more likely
+                    # well-liked," never "is this candidate valid at all" —
+                    # see puzzle_quality_model.py's module docstring
+                    # (2026-09-25) for the full discussion of why, and what
+                    # a genuine validity filter would need instead. Without
+                    # a model, payoff having been reached at all is still
+                    # required (below).
                     quality_gate_passed = quality_score is None or quality_score >= quality_score_threshold
 
                     if (payoff.reached or is_endgame) and quality_gate_passed:

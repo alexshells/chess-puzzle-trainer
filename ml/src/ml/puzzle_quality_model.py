@@ -28,6 +28,36 @@ influence grows smoothly as real votes accumulate (config.py's
 personal_feedback_k/personal_feedback_max_weight).
 
 Run via `uv run python -m ml.puzzle_quality_model`.
+
+**This is not, and cannot be, a validity filter** (2026-09-25 discussion,
+not acted on — deliberately shelved, see below). Every row this model
+trains on — the full 51k-row Lichess sample — already passed Lichess's own
+curation before it ever reached us; the dataset contains zero examples of
+genuinely invalid puzzle shapes (not forced, still-decided, no real
+payoff, ...). A model trained only on already-valid examples can only ever
+learn "among valid candidates, which is more likely to be well-liked" — it
+structurally cannot learn to reject an invalid one, since it's never seen
+one. That job is entirely done by find_blunders' own hard gates (forced,
+win_chance_swing_threshold, win_chance_decided_threshold, decisive-payoff)
+*before* this model's `quality_score` is even computed; by the time this
+model sees a candidate, the "is this legitimate" question is already
+settled. `quality_score_threshold` in game_import.py is real and does
+reject candidates, but it's ranking within the already-valid pool, not
+filtering for validity.
+
+A genuine validity filter would need real negative examples — candidate-
+shaped positions pulled from *uncurated* games (the same kind of sample
+already built once for tactical_sharpness's feature discovery: 7,500
+random chess.com positions, no blunder-filtering at all) — paired with the
+51k curated puzzles as the positive class, so the model actually sees what
+"invalid" looks like instead of only ever ranking within "valid." That
+would let a learned model absorb the *soft* judgment calls currently
+hand-tuned one bug report at a time (win_chance_decided_threshold's -0.65,
+say) — though even then, `forced` and decisive-payoff should probably stay
+hard logical gates rather than being handed to a probabilistic model: "is
+there exactly one right answer" is closer to true/false than a preference.
+Discussed and deliberately deferred, not forgotten — revisit if the
+hand-tuned-threshold-per-bug-report pattern keeps recurring.
 """
 
 import argparse
