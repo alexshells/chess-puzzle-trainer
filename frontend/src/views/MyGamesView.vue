@@ -11,6 +11,7 @@ import {
   linkChessComAccount,
   unlinkChessComAccount,
   type GameImportStatus,
+  type RatingFeedback,
 } from '../api'
 import { session } from '../session'
 
@@ -27,11 +28,20 @@ const currentPuzzle = ref<Puzzle | null>(null)
 const solved = ref(false)
 const gaveUp = ref(false)
 const ratingChange = ref<number | null>(null)
-// 1-5 stars last given for the current puzzle, or null before rating it —
-// feedback is upsert-able, so clicking a different star just overwrites the
-// previous rating rather than needing a separate "undo".
-const feedbackGiven = ref<number | null>(null)
+// Two independent reviews for the current puzzle, each null before given —
+// both are upsert-able, so picking a different value just overwrites the
+// previous one rather than needing a separate "undo". See backend's
+// PuzzleFeedback class doc for why "was this a good puzzle" (stars) and
+// "was the rating accurate" (ratingFeedback) are split rather than one
+// combined review.
+const starsGiven = ref<number | null>(null)
+const ratingFeedbackGiven = ref<RatingFeedback | null>(null)
 const STAR_VALUES = [1, 2, 3, 4, 5]
+const RATING_FEEDBACK_OPTIONS: { value: RatingFeedback; label: string }[] = [
+  { value: 'tooLow', label: 'Too low' },
+  { value: 'aboutRight', label: 'About right' },
+  { value: 'tooHigh', label: 'Too high' },
+]
 
 let solveStartedAt = 0
 let attemptRecorded = false
@@ -107,7 +117,8 @@ async function nextPuzzle() {
   solved.value = false
   gaveUp.value = false
   ratingChange.value = null
-  feedbackGiven.value = null
+  starsGiven.value = null
+  ratingFeedbackGiven.value = null
   currentPuzzle.value = await fetchPersonalPuzzle(session.value.token)
   solveStartedAt = Date.now()
   attemptRecorded = false
@@ -141,12 +152,21 @@ function handleGaveUp() {
   maybeRecordAttempt(false)
 }
 
-function giveFeedback(stars: number) {
+function giveStars(stars: number) {
   if (!session.value || !currentPuzzle.value?.id) return
   const puzzleId = currentPuzzle.value.id
-  feedbackGiven.value = stars // optimistic — a failed retry isn't worth blocking the UI over
-  submitPuzzleFeedback(puzzleId, stars, session.value.token).catch((err) => {
+  starsGiven.value = stars // optimistic — a failed retry isn't worth blocking the UI over
+  submitPuzzleFeedback(puzzleId, { stars }, session.value.token).catch((err) => {
     console.error('Failed to submit puzzle feedback', err)
+  })
+}
+
+function giveRatingFeedback(ratingFeedback: RatingFeedback) {
+  if (!session.value || !currentPuzzle.value?.id) return
+  const puzzleId = currentPuzzle.value.id
+  ratingFeedbackGiven.value = ratingFeedback // optimistic, same as giveStars above
+  submitPuzzleFeedback(puzzleId, { ratingFeedback }, session.value.token).catch((err) => {
+    console.error('Failed to submit rating feedback', err)
   })
 }
 
@@ -210,18 +230,33 @@ onUnmounted(() => {
             <span :class="['delta', deltaClass(ratingChange)]">{{ formatDelta(ratingChange) }} rating</span>
           </p>
 
-          <div v-if="solved || gaveUp" class="feedback">
-            <span class="feedback-prompt">Rate this puzzle:</span>
-            <button
-              v-for="value in STAR_VALUES"
-              :key="value"
-              class="star"
-              :class="{ filled: feedbackGiven !== null && value <= feedbackGiven }"
-              :aria-label="`${value} star${value === 1 ? '' : 's'}`"
-              @click="giveFeedback(value)"
-            >
-              {{ feedbackGiven !== null && value <= feedbackGiven ? '★' : '☆' }}
-            </button>
+          <div v-if="solved || gaveUp" class="reviews">
+            <div class="feedback">
+              <span class="feedback-prompt">Was this a good puzzle?</span>
+              <button
+                v-for="value in STAR_VALUES"
+                :key="value"
+                class="star"
+                :class="{ filled: starsGiven !== null && value <= starsGiven }"
+                :aria-label="`${value} star${value === 1 ? '' : 's'}`"
+                @click="giveStars(value)"
+              >
+                {{ starsGiven !== null && value <= starsGiven ? '★' : '☆' }}
+              </button>
+            </div>
+
+            <div class="feedback">
+              <span class="feedback-prompt">How was the rating?</span>
+              <button
+                v-for="option in RATING_FEEDBACK_OPTIONS"
+                :key="option.value"
+                class="rating-feedback-option"
+                :class="{ selected: ratingFeedbackGiven === option.value }"
+                @click="giveRatingFeedback(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
           </div>
 
           <button v-if="solved || gaveUp" class="next" @click="nextPuzzle">Next puzzle →</button>
@@ -272,7 +307,8 @@ onUnmounted(() => {
 .delta.positive { color: #9dc98a; }
 .delta.negative { color: #d98c8c; }
 .delta.neutral { color: #cfc6b3; }
-.feedback { display: flex; align-items: center; gap: 0.25rem; margin-top: 0.75rem; }
+.reviews { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; margin-top: 0.75rem; }
+.feedback { display: flex; align-items: center; gap: 0.25rem; }
 .feedback-prompt { color: #cfc6b3; font-size: 0.85rem; margin-right: 0.25rem; }
 .star {
   background: transparent;
@@ -284,4 +320,14 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .star.filled { color: #b8985a; }
+.rating-feedback-option {
+  background: transparent;
+  color: #ede6d6;
+  border: 1px solid #47423a;
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.rating-feedback-option.selected { border-color: #b8985a; color: #b8985a; }
 </style>

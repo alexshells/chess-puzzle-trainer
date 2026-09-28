@@ -925,6 +925,43 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
       a Lichess puzzle — its rating is a real crowd-converged value with
       no comparable model uncertainty to report, and both fields are
       simply `null` for those rows.
+  - **Puzzle feedback split into two independent reviews** (2026-09-28,
+    `PuzzleFeedback`) — "was this a good puzzle" (`stars`, 1-5, unchanged)
+    and "was the shown rating accurate" (`ratingFeedback`, one of
+    `tooLow`/`aboutRight`/`tooHigh`) used to be conflated into one star
+    rating, but they're genuinely different questions — a puzzle can be
+    excellent but mis-rated, or fairly-rated but unpleasant. Either can now
+    be submitted alone; `PuzzleFeedbackController::submit()` only touches
+    the field(s) present in the request, so giving one never clobbers the
+    other, and `discardedAt`'s 1-2-star logic only fires when `stars`
+    specifically is included. `stars` had to become nullable
+    (`?int`, was a required constructor param) since a fresh feedback row
+    can now start with only `ratingFeedback` set. Not yet fed back into
+    `puzzle_rating_model.py`'s training — collected now, same "collect
+    first, train once there's enough real volume" arc `stars` itself
+    already went through for `puzzle_quality_model`; this is the first
+    real *direct* rating-accuracy signal the rating model could eventually
+    learn from, unlike `stars` (enjoyment, not accuracy — see that model's
+    own docstring on why it was never a fit).
+    - **Real incident while shipping this**: applied the schema change to
+      local dev via `doctrine:schema:update --dump-sql`'s output, run
+      statement-by-statement through separate `dbal:run-sql` invocations —
+      each call opens its own fresh connection, so the `CREATE TEMPORARY
+      TABLE` used to preserve existing rows during SQLite's column-
+      nullability rebuild vanished before the following `INSERT` could
+      read from it, silently dropping local dev's (small, low-stakes)
+      `puzzle_feedback` data. Caught before touching production — MySQL
+      doesn't need the temp-table rebuild dance at all for this change
+      (`ALTER TABLE ... MODIFY COLUMN`/`ADD COLUMN` work in place), so
+      production was fixed with two plain, non-destructive ALTERs instead,
+      verified row-count-preserved before and after. Lesson: even the
+      "safe," reviewed-`--dump-sql`-first approach adopted after the
+      previous `schema:update --force` incident isn't automatically safe
+      to replay verbatim via one-statement-at-a-time `dbal:run-sql` — a
+      multi-statement SQLite rebuild needs one persistent connection
+      (e.g. the `sqlite3` CLI in a single invocation), or a hand-written
+      native-DDL equivalent per platform, not a naive statement-by-
+      statement replay.
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random

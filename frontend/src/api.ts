@@ -207,7 +207,25 @@ export function fetchPersonalPuzzle(token: string): Promise<Puzzle> {
   return request('/api/puzzles/personal/random', token)
 }
 
-/** A 1-5 star rating on a "My Games" puzzle — only valid for puzzles the caller owns. */
-export function submitPuzzleFeedback(puzzleId: number, stars: number, token: string): Promise<{ stars: number }> {
-  return postJson(`/api/puzzles/${puzzleId}/feedback`, { stars }, token)
+/** Whether the puzzle's shown difficulty rating felt accurate — the second, independent review alongside stars. */
+export type RatingFeedback = 'tooLow' | 'aboutRight' | 'tooHigh'
+
+export interface PuzzleFeedbackResult {
+  stars: number | null
+  ratingFeedback: RatingFeedback | null
+}
+
+/**
+ * Two independent reviews of a "My Games" puzzle — only valid for puzzles
+ * the caller owns. Either can be given alone; each overwrites only its own
+ * field (see backend's PuzzleFeedback class doc for why they're split):
+ * `stars` (1-5) answers "was this a good puzzle," `ratingFeedback` answers
+ * "was the shown difficulty rating accurate."
+ */
+export function submitPuzzleFeedback(
+  puzzleId: number,
+  feedback: { stars?: number; ratingFeedback?: RatingFeedback },
+  token: string,
+): Promise<PuzzleFeedbackResult> {
+  return postJson(`/api/puzzles/${puzzleId}/feedback`, feedback, token)
 }
