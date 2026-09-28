@@ -10,6 +10,7 @@ use App\Service\PersonalPuzzleSelectionService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
 /**
@@ -60,12 +61,21 @@ class GameImportController
     }
 
     #[Route('/api/puzzles/personal/random', methods: ['GET'])]
-    public function randomPersonalPuzzle(): JsonResponse
+    public function randomPersonalPuzzle(Request $request): JsonResponse
     {
         /** @var User $user */
         $user = $this->security->getUser();
 
-        $puzzle = $this->personalPuzzleSelectionService->selectNext($user);
+        // ?mode=practice — same query-param convention as PuzzleController's
+        // ?mode= (Rating/Weakness/Random). Every unsolved puzzle has already
+        // been served at least once (selectNext() only returns null once
+        // that's true), so this re-serves from the full pool, solved puzzles
+        // included, instead of the normal queue's "solved puzzles are done"
+        // rule — what the frontend offers as "Practice again" once it hits
+        // that empty state.
+        $puzzle = 'practice' === $request->query->get('mode')
+            ? $this->personalPuzzleSelectionService->selectForPractice($user)
+            : $this->personalPuzzleSelectionService->selectNext($user);
 
         if (null === $puzzle) {
             return new JsonResponse(['error' => 'No personal puzzles to solve right now — import more games or check back later'], 404);

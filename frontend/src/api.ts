@@ -203,8 +203,15 @@ export function unlinkChessComAccount(token: string): Promise<ChessComLink> {
   return request('/api/me/chess-com-link', token, { method: 'DELETE' })
 }
 
-export function fetchPersonalPuzzle(token: string): Promise<Puzzle> {
-  return request('/api/puzzles/personal/random', token)
+/**
+ * practice=true re-serves from the full pool, solved puzzles included —
+ * what "Practice again" uses once the normal queue (every unsolved puzzle
+ * already served at least once) has nothing left, signaled by this
+ * rejecting with a 404. See backend's GameImportController::randomPersonalPuzzle().
+ */
+export function fetchPersonalPuzzle(token: string, practice = false): Promise<Puzzle> {
+  const query = practice ? '?mode=practice' : ''
+  return request(`/api/puzzles/personal/random${query}`, token)
 }
 
 /** Whether the puzzle's shown difficulty rating felt accurate — the second, independent review alongside stars. */

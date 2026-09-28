@@ -962,6 +962,34 @@ https://claude.ai/code/artifact/4b6dc3fc-311f-4f51-90ee-2c22576e0db6
       (e.g. the `sqlite3` CLI in a single invocation), or a hand-written
       native-DDL equivalent per platform, not a naive statement-by-
       statement replay.
+  - **"You're all caught up" + Practice again, instead of a stuck board**
+    (2026-09-28) — a real gap: `PersonalPuzzleQueue::selectNextId()`
+    already correctly returns `null` once every unsolved puzzle has been
+    served at least once, and the controller correctly 404s — but
+    `MyGamesView.vue`'s `nextPuzzle()` had no `try`/`catch` around that
+    fetch, so clicking "Next puzzle" on the actual last one left
+    `currentPuzzle` on its old value: the previous puzzle's board (in
+    whatever final state it was left in) stuck on screen with no
+    indication anything had changed. Only ever reachable this way — the
+    board section doesn't render at all until `status.puzzlesFound > 0`,
+    so this never shows on first load, only after working through a real
+    pool.
+    - Fix: `nextPuzzle()` now catches the fetch failure, clears
+      `currentPuzzle`, and sets a new `caughtUp` flag that swaps the whole
+      board section for a plain message + a **Practice again** button.
+    - **Practice again** re-serves from the full pool, solved puzzles
+      included — a genuinely different selection than the normal queue's
+      "solved puzzles are done for good" rule, so it needed real backend
+      support, not just a frontend retry: `PersonalPuzzleSelectionService::selectForPractice()`
+      (uniform-random over `findAllForOwner()`'s full non-discarded pool,
+      deliberately no attempt/rating-aware ordering — the point here is
+      "let me replay something," not "what should I work on next," unlike
+      `selectNext()`), reached via `GET /api/puzzles/personal/random?mode=practice`
+      — same `?mode=` query-param convention `PuzzleController::random()`
+      already uses for Rating/Weakness/Random. Once triggered, the
+      frontend stays in practice mode for the rest of that visit (every
+      unsolved puzzle has already been served, so reverting to the normal
+      queue would just hit the same empty state again immediately).
 - Phase 2.6 (built, **no longer used for live serving — see Phase 2.8**):
   **delivery bandit** — contextual Thompson Sampling decided which
   "My Games" puzzle to serve next, instead of the original uniform-random

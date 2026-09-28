@@ -27,6 +27,18 @@ const starting = ref(false)
 const currentPuzzle = ref<Puzzle | null>(null)
 const solved = ref(false)
 const gaveUp = ref(false)
+// True once fetchPersonalPuzzle has nothing left to serve — every unsolved
+// puzzle in the pool has already been served at least once. Shown instead
+// of leaving the previous puzzle's board/final-state on screen, which is
+// what happened before this existed (an uncaught fetch failure just left
+// nextPuzzle() half-finished). Only ever reached by clicking "Next puzzle"
+// on the actual last one — the board section itself doesn't render at all
+// until status.puzzlesFound > 0, so this never shows on first load.
+const caughtUp = ref(false)
+// Not reactive on purpose — this only ever flips true from a user click
+// (practiceAgain) and nothing in the template reacts to it directly, it
+// just changes which query fetchPersonalPuzzle's next call makes.
+let practiceMode = false
 const ratingChange = ref<number | null>(null)
 // Two independent reviews for the current puzzle, each null before given —
 // both are upsert-able, so picking a different value just overwrites the
@@ -119,9 +131,22 @@ async function nextPuzzle() {
   ratingChange.value = null
   starsGiven.value = null
   ratingFeedbackGiven.value = null
-  currentPuzzle.value = await fetchPersonalPuzzle(session.value.token)
+  try {
+    currentPuzzle.value = await fetchPersonalPuzzle(session.value.token, practiceMode)
+    caughtUp.value = false
+  } catch {
+    // Nothing left to serve (see caughtUp's own doc above) — clear the old
+    // puzzle rather than leaving its board/final-state on screen.
+    currentPuzzle.value = null
+    caughtUp.value = true
+  }
   solveStartedAt = Date.now()
   attemptRecorded = false
+}
+
+function practiceAgain() {
+  practiceMode = true
+  nextPuzzle()
 }
 
 function maybeRecordAttempt(success: boolean) {
@@ -221,6 +246,12 @@ onUnmounted(() => {
         </div>
 
         <template v-if="status && status.puzzlesFound > 0">
+          <div v-if="caughtUp" class="caught-up">
+            <p class="counter">You're all caught up! Every puzzle in your pool has been solved at least once.</p>
+            <button class="next" @click="practiceAgain">Practice again</button>
+          </div>
+
+          <template v-else>
           <p v-if="currentPuzzle?.gameUrl" class="counter">
             <a class="link" :href="currentPuzzle.gameUrl" target="_blank" rel="noopener">View this game on chess.com</a>
           </p>
@@ -260,6 +291,7 @@ onUnmounted(() => {
           </div>
 
           <button v-if="solved || gaveUp" class="next" @click="nextPuzzle">Next puzzle →</button>
+          </template>
         </template>
       </template>
     </template>
@@ -302,6 +334,7 @@ onUnmounted(() => {
   padding: 0;
   margin-left: 0.4rem;
 }
+.caught-up { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 1.5rem 0; }
 .rating-change { margin: 0.6rem 0 0; font-size: 0.9rem; }
 .delta { font-weight: 600; }
 .delta.positive { color: #9dc98a; }

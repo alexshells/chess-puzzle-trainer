@@ -75,4 +75,23 @@ class PersonalPuzzleSelectionService
 
         return null; // Unreachable — selectNextId only ever returns an id drawn from $candidates.
     }
+
+    /**
+     * Uniform-random pick from the owner's full non-discarded pool, solved
+     * puzzles included — unlike selectNext(), which drops a puzzle for good
+     * the moment it's solved. Backs the "Practice again" option offered
+     * once selectNext() itself has nothing left (see GameImportController).
+     * Deliberately simple: no attempt/rating-aware ordering, since the
+     * whole point here is "let me replay something," not "what should I
+     * work on next."
+     */
+    public function selectForPractice(User $user): ?Puzzle
+    {
+        $puzzles = $this->puzzleRepository->findAllForOwner($user);
+        if ([] === $puzzles) {
+            return null;
+        }
+
+        return $puzzles[array_rand($puzzles)];
+    }
 }
